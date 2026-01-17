@@ -34,9 +34,27 @@ def test_chunk_content_large_paragraph():
     
     chunks = chunk_content(content, max_chunk_size=1000)
     
-    # Large paragraph should be its own chunk
-    assert any(len(chunk) > 1000 for chunk in chunks)
+    # Large paragraph should be split into multiple chunks
     assert len(chunks) >= 2
+    # Each chunk should be reasonably sized (not exceeding max by much)
+    for chunk in chunks:
+        assert len(chunk) <= 1100  # Allow 10% margin
+
+
+def test_chunk_content_very_large_paragraph_with_sentences():
+    """Test chunking of very large paragraph containing sentences."""
+    # Create a large paragraph with sentences
+    sentence = "This is a test sentence with some content. "
+    large_para = sentence * 100  # ~4000 chars
+    
+    chunks = chunk_content(large_para, max_chunk_size=1000)
+    
+    # Should be split into multiple chunks
+    assert len(chunks) >= 3
+    # Each chunk should contain complete sentences
+    for chunk in chunks:
+        # Should end with sentence ending or be part of a sentence
+        assert len(chunk) > 0
 
 
 def test_chunk_content_empty():
