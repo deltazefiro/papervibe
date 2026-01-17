@@ -155,31 +155,36 @@ Rules:
 4. NEVER gray out section headings, captions, or labels
 5. Return ONLY the modified chunk with wrappers added
 6. Do NOT change any text content except adding \\pvgray{} wrappers
-7. Preserve all LaTeX formatting, commands, and structure"""
+7. Preserve all LaTeX formatting, commands, and structure EXACTLY
+8. Preserve all whitespace, newlines, and indentation EXACTLY as in the original
+9. Do NOT add vspace, hspace, or any other spacing/formatting commands
+10. Do NOT use "..." as a placeholder - always include the complete original text
+11. The ONLY change should be wrapping sentences with \\pvgray{...} - nothing else"""
 
             user_prompt = f"""Gray out approximately {gray_ratio*100:.0f}% of the less important sentences in this chunk by wrapping them with \\pvgray{{...}}:
 
 {chunk}
 
-Remember: Only add \\pvgray{{}} wrappers around less important sentences. Do not modify any other text."""
+CRITICAL: Return the text EXACTLY as provided, with ONLY \\pvgray{{...}} wrappers added. Preserve all whitespace, newlines, and formatting. Do not change anything else."""
 
             try:
                 response = await asyncio.wait_for(
-                    self.client.beta.chat.completions.parse(
+                    self.client.chat.completions.create(
                         model=self.settings.light_model,
                         messages=[
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_prompt},
                         ],
-                        response_format=GrayedChunk,
                         temperature=0.3,
                         max_completion_tokens=16000,  # Use almost the full 16K limit for gpt-4o-mini
                     ),
                     timeout=self.settings.request_timeout_seconds,
                 )
                 
-                result = response.choices[0].message.parsed
-                return result.content
+                result = response.choices[0].message.content
+                if result is None:
+                    return chunk
+                return result
             except asyncio.TimeoutError:
                 # On timeout, return original chunk
                 return chunk
