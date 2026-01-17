@@ -15,6 +15,7 @@ from papervibe.latex import (
     get_abstract_span,
     replace_abstract,
     inject_preamble,
+    find_input_files,
     LatexError,
 )
 from papervibe.llm import LLMClient
@@ -166,29 +167,104 @@ async def _process_arxiv_paper(
     typer.echo(f"Injecting preamble...")
     modified_content = inject_preamble(modified_content)
     
+    # Initialize modified input files dictionary (used later in Step 10)
+    modified_input_files = {}
+    
     # Step 9: Gray out sentences
     if not skip_gray:
         typer.echo(f"Graying out less important sentences (ratio={gray_ratio})...")
         
-        # Find references cutoff to exclude references section
-        cutoff = find_references_cutoff(modified_content)
+        # Find all input files referenced by main.tex
+        input_files = find_input_files(modified_content, source_dir)
         
-        # Find abstract span to exclude from graying
-        abstract_span = get_abstract_span(modified_content)
+        # Process each input file separately
+        total_chars_processed = 0
+        for input_file in input_files:
+            try:
+                input_content = input_file.read_text(encoding="utf-8", errors="ignore")
+                
+                # Check if this is the abstract file (skip graying)
+                if extract_abstract(input_content):
+                    typer.echo(f"   Skipping {input_file.name} (contains abstract)")
+                    continue
+                
+                # Gray out this file's content
+                grayed_input = await gray_out_content_parallel(
+                    input_content,
+                    llm_client,
+                    gray_ratio=gray_ratio,
+                )
+                
+                modified_input_files[input_file] = grayed_input
+                total_chars_processed += len(input_content)
+                
+            except Exception as e:
+                typer.echo(f"   Warning: Failed to process {input_file.name}: {e}")
         
-        if cutoff is not None:
-            # Process only pre-references content
-            pre_refs = modified_content[:cutoff]
-            post_refs = modified_content[cutoff:]
+        if modified_input_files:
+            typer.echo(f"   Processed {len(modified_input_files)} input files ({total_chars_processed} chars)")
+        else:
+            # Fallback to old behavior if no input files found
+            # Find references cutoff to exclude references section
+            cutoff = find_references_cutoff(modified_content)
             
-            # Exclude abstract from graying
-            if abstract_span is not None:
-                abs_start, abs_end = abstract_span
-                if abs_end <= cutoff:
-                    # Abstract is before references, split content into 3 parts
-                    before_abstract = pre_refs[:abs_start]
-                    abstract_region = pre_refs[abs_start:abs_end]
-                    after_abstract = pre_refs[abs_end:]
+            # Find abstract span to exclude from graying
+            abstract_span = get_abstract_span(modified_content)
+            
+            if cutoff is not None:
+                # Process only pre-references content
+                pre_refs = modified_content[:cutoff]
+                post_refs = modified_content[cutoff:]
+                
+                # Exclude abstract from graying
+                if abstract_span is not None:
+                    abs_start, abs_end = abstract_span
+                    if abs_end <= cutoff:
+                        # Abstract is before references, split content into 3 parts
+                        before_abstract = pre_refs[:abs_start]
+                        abstract_region = pre_refs[abs_start:abs_end]
+                        after_abstract = pre_refs[abs_end:]
+                        
+                        # Gray out only before and after abstract
+                        grayed_before = await gray_out_content_parallel(
+                            before_abstract,
+                            llm_client,
+                            gray_ratio=gray_ratio,
+                        ) if before_abstract.strip() else before_abstract
+                        
+                        grayed_after = await gray_out_content_parallel(
+                            after_abstract,
+                            llm_client,
+                            gray_ratio=gray_ratio,
+                        ) if after_abstract.strip() else after_abstract
+                        
+                        modified_content = grayed_before + abstract_region + grayed_after + post_refs
+                        typer.echo(f"   Processed {len(before_abstract) + len(after_abstract)} chars (excluded abstract and references)")
+                    else:
+                        # Abstract is after references (unlikely), just exclude references
+                        grayed_pre_refs = await gray_out_content_parallel(
+                            pre_refs,
+                            llm_client,
+                            gray_ratio=gray_ratio,
+                        )
+                        modified_content = grayed_pre_refs + post_refs
+                        typer.echo(f"   Processed {len(pre_refs)} chars (excluded references)")
+                else:
+                    # No abstract found, just exclude references
+                    grayed_pre_refs = await gray_out_content_parallel(
+                        pre_refs,
+                        llm_client,
+                        gray_ratio=gray_ratio,
+                    )
+                    modified_content = grayed_pre_refs + post_refs
+                    typer.echo(f"   Processed {len(pre_refs)} chars (excluded references)")
+            else:
+                # No references found
+                if abstract_span is not None:
+                    abs_start, abs_end = abstract_span
+                    before_abstract = modified_content[:abs_start]
+                    abstract_region = modified_content[abs_start:abs_end]
+                    after_abstract = modified_content[abs_end:]
                     
                     # Gray out only before and after abstract
                     grayed_before = await gray_out_content_parallel(
@@ -203,57 +279,16 @@ async def _process_arxiv_paper(
                         gray_ratio=gray_ratio,
                     ) if after_abstract.strip() else after_abstract
                     
-                    modified_content = grayed_before + abstract_region + grayed_after + post_refs
-                    typer.echo(f"   Processed {len(before_abstract) + len(after_abstract)} chars (excluded abstract and references)")
+                    modified_content = grayed_before + abstract_region + grayed_after
+                    typer.echo(f"   Processed entire document (excluded abstract)")
                 else:
-                    # Abstract is after references (unlikely), just exclude references
-                    grayed_pre_refs = await gray_out_content_parallel(
-                        pre_refs,
+                    # No abstract found, process entire content
+                    modified_content = await gray_out_content_parallel(
+                        modified_content,
                         llm_client,
                         gray_ratio=gray_ratio,
                     )
-                    modified_content = grayed_pre_refs + post_refs
-                    typer.echo(f"   Processed {len(pre_refs)} chars (excluded references)")
-            else:
-                # No abstract found, just exclude references
-                grayed_pre_refs = await gray_out_content_parallel(
-                    pre_refs,
-                    llm_client,
-                    gray_ratio=gray_ratio,
-                )
-                modified_content = grayed_pre_refs + post_refs
-                typer.echo(f"   Processed {len(pre_refs)} chars (excluded references)")
-        else:
-            # No references found
-            if abstract_span is not None:
-                abs_start, abs_end = abstract_span
-                before_abstract = modified_content[:abs_start]
-                abstract_region = modified_content[abs_start:abs_end]
-                after_abstract = modified_content[abs_end:]
-                
-                # Gray out only before and after abstract
-                grayed_before = await gray_out_content_parallel(
-                    before_abstract,
-                    llm_client,
-                    gray_ratio=gray_ratio,
-                ) if before_abstract.strip() else before_abstract
-                
-                grayed_after = await gray_out_content_parallel(
-                    after_abstract,
-                    llm_client,
-                    gray_ratio=gray_ratio,
-                ) if after_abstract.strip() else after_abstract
-                
-                modified_content = grayed_before + abstract_region + grayed_after
-                typer.echo(f"   Processed entire document (excluded abstract)")
-            else:
-                # No abstract found, process entire content
-                modified_content = await gray_out_content_parallel(
-                    modified_content,
-                    llm_client,
-                    gray_ratio=gray_ratio,
-                )
-                typer.echo(f"   Processed entire document")
+                    typer.echo(f"   Processed entire document")
     
     # Step 10: Write modified files
     typer.echo(f"Writing modified files...")
@@ -269,6 +304,15 @@ async def _process_arxiv_paper(
     # Overwrite main .tex file with modified content
     modified_main = modified_dir / main_tex.name
     modified_main.write_text(modified_content, encoding="utf-8")
+    
+    # Overwrite modified input files
+    if not skip_gray:
+        for input_file, grayed_content in modified_input_files.items():
+            # Compute relative path and write to modified directory
+            rel_path = input_file.relative_to(source_dir)
+            output_file = modified_dir / rel_path
+            output_file.write_text(grayed_content, encoding="utf-8")
+    
     typer.echo(f"   Modified files in: {modified_dir}")
     
     # Step 11: Compile PDF

@@ -23,10 +23,13 @@ def test_find_main_tex_file():
     assert main_file.name == "main.tex"
 
 
-def test_find_main_tex_file_no_tex():
+def test_find_main_tex_file_no_tex(tmp_path):
     """Test error when no .tex files are found."""
+    # Use a guaranteed empty directory
+    empty_dir = tmp_path / "empty"
+    empty_dir.mkdir()
     with pytest.raises(LatexError, match="No .tex files found"):
-        find_main_tex_file(Path("/tmp"))
+        find_main_tex_file(empty_dir)
 
 
 def test_find_references_cutoff():

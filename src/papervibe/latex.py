@@ -278,3 +278,44 @@ def strip_pvgray_wrappers(text: str) -> str:
             i += 1
     
     return "".join(result)
+
+
+def find_input_files(content: str, base_dir: Path) -> List[Path]:
+    """
+    Find all files referenced by \\input{} or \\include{} commands.
+    
+    Args:
+        content: LaTeX file content
+        base_dir: Base directory for resolving relative paths
+        
+    Returns:
+        List of absolute paths to input files
+    """
+    input_files = []
+    
+    # Match \input{filename} and \include{filename}
+    patterns = [
+        r"\\input\{([^}]+)\}",
+        r"\\include\{([^}]+)\}",
+    ]
+    
+    for pattern in patterns:
+        for match in re.finditer(pattern, content):
+            filename = match.group(1).strip()
+            
+            # Resolve path relative to base_dir
+            # Add .tex extension if not present
+            if not filename.endswith(".tex"):
+                tex_path = base_dir / f"{filename}.tex"
+            else:
+                tex_path = base_dir / filename
+            
+            # Also try without adding .tex
+            alt_path = base_dir / filename
+            
+            if tex_path.exists():
+                input_files.append(tex_path)
+            elif alt_path.exists():
+                input_files.append(alt_path)
+    
+    return input_files
