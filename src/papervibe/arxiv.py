@@ -59,6 +59,10 @@ def parse_arxiv_id(url_or_id: str) -> Tuple[str, Optional[str]]:
         # Remove .pdf extension if present
         url_or_id = re.sub(r"\.pdf$", "", url_or_id)
     
+    # Strip arXiv. or arXiv: prefix if present
+    if url_or_id.startswith("arXiv.") or url_or_id.startswith("arXiv:"):
+        url_or_id = url_or_id[6:]
+    
     # Now parse the ID itself
     # New style: YYMM.NNNNN[vN]
     match = re.match(r"^(\d{4}\.\d{4,5})(v\d+)?$", url_or_id)

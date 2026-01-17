@@ -73,3 +73,25 @@ def test_parse_invalid_id():
     
     with pytest.raises(ArxivError, match="Invalid arXiv ID format"):
         parse_arxiv_id("123")
+
+
+def test_parse_arxiv_dot_prefix():
+    """Test parsing IDs with arXiv. prefix."""
+    arxiv_id, version = parse_arxiv_id("arXiv.2501.03218")
+    assert arxiv_id == "2501.03218"
+    assert version is None
+    
+    arxiv_id, version = parse_arxiv_id("arXiv.2409.14485v1")
+    assert arxiv_id == "2409.14485"
+    assert version == "v1"
+
+
+def test_parse_arxiv_colon_prefix():
+    """Test parsing IDs with arXiv: prefix."""
+    arxiv_id, version = parse_arxiv_id("arXiv:2510.09608")
+    assert arxiv_id == "2510.09608"
+    assert version is None
+    
+    arxiv_id, version = parse_arxiv_id("arXiv:2107.03374v2")
+    assert arxiv_id == "2107.03374"
+    assert version == "v2"
