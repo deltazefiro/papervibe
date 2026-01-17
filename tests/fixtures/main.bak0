@@ -1,0 +1,34 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{graphicx}
+
+\title{Test Paper}
+\author{Test Author}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This is the original abstract. It contains multiple sentences. This paper presents novel research.
+\end{abstract}
+
+\section{Introduction}
+This is the introduction section. It has some text here.
+
+The introduction continues with more paragraphs.
+
+\section{Related Work}
+Some related work is discussed here.
+
+\section{Method}
+Our method is described in detail.
+
+\section{Results}
+We present experimental results.
+
+\begin{thebibliography}{99}
+\bibitem{ref1} First reference here.
+\bibitem{ref2} Second reference here.
+\end{thebibliography}
+
+\end{document}
