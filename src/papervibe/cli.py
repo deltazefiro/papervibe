@@ -147,28 +147,57 @@ async def _process_arxiv_paper(
     # Step 6: Initialize LLM client
     llm_client = LLMClient(concurrency=concurrency, dry_run=dry_run)
     
+    # Initialize modified input files dictionary (used for abstract rewrite and gray stage)
+    modified_input_files = {}
+    
     # Step 7: Rewrite abstract
+    abstract_file_path = None
+    abstract_found_in_main = False
+    
     if not skip_abstract:
         typer.echo(f"Rewriting abstract...")
+        
+        # First, try to find abstract in main file
         abstract_result = extract_abstract(modified_content)
         
         if abstract_result:
+            # Abstract found in main file
+            abstract_found_in_main = True
             original_abstract, _, _ = abstract_result
-            typer.echo(f"   Original abstract: {len(original_abstract)} chars")
+            typer.echo(f"   Found abstract in {main_tex.name}: {len(original_abstract)} chars")
             
             new_abstract = await llm_client.rewrite_abstract(original_abstract)
             typer.echo(f"   New abstract: {len(new_abstract)} chars")
             
             modified_content = replace_abstract(modified_content, new_abstract)
         else:
-            typer.echo(f"   Warning: No abstract found, skipping rewrite")
+            # Try to find abstract in included files
+            input_files = find_input_files(modified_content, source_dir)
+            for input_file in input_files:
+                try:
+                    input_content = input_file.read_text(encoding="utf-8", errors="ignore")
+                    abstract_result = extract_abstract(input_content)
+                    
+                    if abstract_result:
+                        original_abstract, _, _ = abstract_result
+                        typer.echo(f"   Found abstract in {input_file.name}: {len(original_abstract)} chars")
+                        
+                        new_abstract = await llm_client.rewrite_abstract(original_abstract)
+                        typer.echo(f"   New abstract: {len(new_abstract)} chars")
+                        
+                        # Store the file path and modified content for later
+                        abstract_file_path = input_file
+                        modified_input_files[input_file] = replace_abstract(input_content, new_abstract)
+                        break
+                except Exception as e:
+                    continue
+            
+            if abstract_file_path is None and not abstract_found_in_main:
+                typer.echo(f"   Warning: No abstract found in main or included files, skipping rewrite")
     
     # Step 8: Inject preamble (xcolor + \pvgray macro)
     typer.echo(f"Injecting preamble...")
     modified_content = inject_preamble(modified_content)
-    
-    # Initialize modified input files dictionary (used later in Step 10)
-    modified_input_files = {}
     
     # Step 9: Gray out sentences
     if not skip_gray:
@@ -180,6 +209,11 @@ async def _process_arxiv_paper(
         # Process each input file separately
         total_chars_processed = 0
         for input_file in input_files:
+            # Skip if we already processed this file during abstract rewrite
+            if input_file in modified_input_files:
+                typer.echo(f"   Skipping {input_file.name} (already processed during abstract rewrite)")
+                continue
+                
             try:
                 input_content = input_file.read_text(encoding="utf-8", errors="ignore")
                 
