@@ -1,6 +1,7 @@
 """Tests for CLI module."""
 
-from papervibe.cli import app
+import sys
+from papervibe.cli import app, main_entry
 from papervibe.latex import get_abstract_span
 
 
@@ -8,6 +9,38 @@ def test_cli_import():
     """Test that CLI app can be imported."""
     assert app is not None
     assert hasattr(app, "command")
+
+
+def test_cli_arxiv_subcommand():
+    """Test that 'papervibe arxiv <url>' works (explicit subcommand)."""
+    # Simulate command line: papervibe arxiv invalid-id --skip-abstract --skip-gray --skip-compile
+    original_argv = sys.argv.copy()
+    try:
+        sys.argv = ['papervibe', 'arxiv', 'invalid-id', '--skip-abstract', '--skip-gray', '--skip-compile']
+        try:
+            main_entry()
+            assert False, "Should have exited with error"
+        except SystemExit as e:
+            # Should fail with ArxivError (exit 1), not argument parsing error (exit 2)
+            assert e.code == 1
+    finally:
+        sys.argv = original_argv
+
+
+def test_cli_direct_url():
+    """Test that 'papervibe <url>' works (compat alias)."""
+    # Simulate command line: papervibe invalid-id --skip-abstract --skip-gray --skip-compile
+    original_argv = sys.argv.copy()
+    try:
+        sys.argv = ['papervibe', 'invalid-id', '--skip-abstract', '--skip-gray', '--skip-compile']
+        try:
+            main_entry()
+            assert False, "Should have exited with error"
+        except SystemExit as e:
+            # Should fail with ArxivError (exit 1), not argument parsing error (exit 2)
+            assert e.code == 1
+    finally:
+        sys.argv = original_argv
 
 
 def test_abstract_exclusion_from_graying():

@@ -2,6 +2,7 @@
 
 import asyncio
 import shutil
+import sys
 import typer
 from pathlib import Path
 from typing import Optional
@@ -23,18 +24,34 @@ from papervibe.compile import compile_latex, check_latexmk_available, CompileErr
 app = typer.Typer(help="PaperVibe: Enhance arXiv papers with AI-powered abstract rewrites and smart highlighting")
 
 
-@app.command()
-def arxiv(
-    url: str = typer.Argument(..., help="arXiv URL or ID (e.g., 2107.03374 or https://arxiv.org/abs/2107.03374)"),
-    out: Optional[Path] = typer.Option(None, help="Output directory"),
-    skip_abstract: bool = typer.Option(False, help="Skip abstract rewriting"),
-    skip_gray: bool = typer.Option(False, help="Skip sentence graying"),
-    skip_compile: bool = typer.Option(False, help="Skip PDF compilation"),
-    gray_ratio: float = typer.Option(0.4, help="Target ratio of sentences to gray out"),
-    concurrency: int = typer.Option(8, help="Number of concurrent LLM requests"),
-    dry_run: bool = typer.Option(False, help="Dry run mode (skip LLM calls)"),
+def _inject_arxiv_command():
+    """Inject 'arxiv' command if user provides direct URL (for backward compat)."""
+    # If first argument doesn't look like a known command and isn't a flag, assume it's a URL
+    if len(sys.argv) > 1 and not sys.argv[1].startswith('-') and sys.argv[1] not in ['arxiv', 'main']:
+        # Insert 'arxiv' as the subcommand
+        sys.argv.insert(1, 'arxiv')
+
+
+@app.callback(invoke_without_command=True)
+def default_command(ctx: typer.Context):
+    """Handle default command routing for backward compatibility."""
+    if ctx.invoked_subcommand is None:
+        # No subcommand specified - default to main command
+        # This is handled by the ctx system automatically if we don't intervene
+        pass
+
+
+def _process_arxiv_command(
+    url: str,
+    out: Optional[Path],
+    skip_abstract: bool,
+    skip_gray: bool,
+    skip_compile: bool,
+    gray_ratio: float,
+    concurrency: int,
+    dry_run: bool,
 ):
-    """Process an arXiv paper: download, enhance abstract, gray out less important sentences, and compile PDF."""
+    """Shared implementation for arXiv processing."""
     try:
         asyncio.run(_process_arxiv_paper(
             url=url,
@@ -52,6 +69,36 @@ def arxiv(
     except KeyboardInterrupt:
         typer.echo("\nInterrupted by user", err=True)
         raise typer.Exit(code=130)
+
+
+# Primary command: papervibe arxiv <url>
+@app.command("arxiv", help="Process an arXiv paper: download, enhance abstract, gray out less important sentences, and compile PDF.")
+def cmd_arxiv(
+    url: str = typer.Argument(..., help="arXiv URL or ID (e.g., 2107.03374 or https://arxiv.org/abs/2107.03374)"),
+    out: Optional[Path] = typer.Option(None, help="Output directory"),
+    skip_abstract: bool = typer.Option(False, help="Skip abstract rewriting"),
+    skip_gray: bool = typer.Option(False, help="Skip sentence graying"),
+    skip_compile: bool = typer.Option(False, help="Skip PDF compilation"),
+    gray_ratio: float = typer.Option(0.4, help="Target ratio of sentences to gray out"),
+    concurrency: int = typer.Option(8, help="Number of concurrent LLM requests"),
+    dry_run: bool = typer.Option(False, help="Dry run mode (skip LLM calls)"),
+):
+    _process_arxiv_command(url, out, skip_abstract, skip_gray, skip_compile, gray_ratio, concurrency, dry_run)
+
+
+# Compat alias: papervibe <url> (default command for backward compatibility)
+@app.command()
+def main(
+    url: str = typer.Argument(..., help="arXiv URL or ID (e.g., 2107.03374 or https://arxiv.org/abs/2107.03374)"),
+    out: Optional[Path] = typer.Option(None, help="Output directory"),
+    skip_abstract: bool = typer.Option(False, help="Skip abstract rewriting"),
+    skip_gray: bool = typer.Option(False, help="Skip sentence graying"),
+    skip_compile: bool = typer.Option(False, help="Skip PDF compilation"),
+    gray_ratio: float = typer.Option(0.4, help="Target ratio of sentences to gray out"),
+    concurrency: int = typer.Option(8, help="Number of concurrent LLM requests"),
+    dry_run: bool = typer.Option(False, help="Dry run mode (skip LLM calls)"),
+):
+    _process_arxiv_command(url, out, skip_abstract, skip_gray, skip_compile, gray_ratio, concurrency, dry_run)
 
 
 async def _process_arxiv_paper(
@@ -211,12 +258,13 @@ async def _process_arxiv_paper(
     # Step 10: Write modified files
     typer.echo(f"Writing modified files...")
     modified_dir = out / "modified"
-    modified_dir.mkdir(exist_ok=True)
     
-    # Copy all files from original to modified
-    for file in source_dir.iterdir():
-        if file.is_file():
-            shutil.copy2(file, modified_dir / file.name)
+    # Remove existing modified directory if it exists to ensure clean state
+    if modified_dir.exists():
+        shutil.rmtree(modified_dir)
+    
+    # Recursively copy all files from original to modified
+    shutil.copytree(source_dir, modified_dir)
     
     # Overwrite main .tex file with modified content
     modified_main = modified_dir / main_tex.name
@@ -249,5 +297,11 @@ async def _process_arxiv_paper(
         typer.echo(f"   Final PDF: {out / final_pdf_name}")
 
 
-if __name__ == "__main__":
+def main_entry():
+    """Entry point that handles backward compatibility for direct URL invocation."""
+    _inject_arxiv_command()
     app()
+
+
+if __name__ == "__main__":
+    main_entry()

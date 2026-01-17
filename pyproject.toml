@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.scripts]
-papervibe = "papervibe.cli:app"
+papervibe = "papervibe.cli:main_entry"
 
 [build-system]
 requires = ["hatchling"]
