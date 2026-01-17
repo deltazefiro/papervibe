@@ -11,11 +11,12 @@ class GrayPipelineError(Exception):
     pass
 
 
-def chunk_content(content: str, max_chunk_size: int = 2500) -> List[str]:
+def chunk_content(content: str, max_chunk_size: int = 2000) -> List[str]:
     """
     Split content into chunks for parallel processing.
     
     Chunks are split at blank lines and section boundaries to maintain context.
+    If a paragraph is too large, it's further split into smaller pieces.
     
     Args:
         content: LaTeX content to chunk
@@ -34,13 +35,56 @@ def chunk_content(content: str, max_chunk_size: int = 2500) -> List[str]:
     for para in paragraphs:
         para_size = len(para)
         
-        # If single paragraph exceeds max size, add it as its own chunk
+        # If single paragraph exceeds max size, split it further
         if para_size > max_chunk_size:
+            # Add current chunk if not empty
             if current_chunk:
                 chunks.append('\n\n'.join(current_chunk))
                 current_chunk = []
                 current_size = 0
-            chunks.append(para)
+            
+            # Split large paragraph by sentences or at fixed intervals
+            # Try splitting by sentences first (look for '. ' or '.\n')
+            sentences = re.split(r'(\.\s+|\.\n)', para)
+            
+            # Rejoin sentence content with delimiters
+            rejoined_sentences = []
+            for i in range(0, len(sentences) - 1, 2):
+                if i + 1 < len(sentences):
+                    rejoined_sentences.append(sentences[i] + sentences[i + 1])
+                else:
+                    rejoined_sentences.append(sentences[i])
+            if len(sentences) % 2 == 1:
+                rejoined_sentences.append(sentences[-1])
+            
+            # Now chunk the sentences
+            sub_chunk = []
+            sub_size = 0
+            for sent in rejoined_sentences:
+                sent_size = len(sent)
+                
+                # If a single sentence is still too large, split it at fixed intervals
+                if sent_size > max_chunk_size:
+                    if sub_chunk:
+                        chunks.append(''.join(sub_chunk))
+                        sub_chunk = []
+                        sub_size = 0
+                    
+                    # Split at fixed intervals as last resort
+                    for i in range(0, len(sent), max_chunk_size):
+                        chunks.append(sent[i:i + max_chunk_size])
+                    continue
+                
+                if sub_size + sent_size > max_chunk_size and sub_chunk:
+                    chunks.append(''.join(sub_chunk))
+                    sub_chunk = [sent]
+                    sub_size = sent_size
+                else:
+                    sub_chunk.append(sent)
+                    sub_size += sent_size
+            
+            if sub_chunk:
+                chunks.append(''.join(sub_chunk))
             continue
         
         # If adding this paragraph would exceed max size, start new chunk

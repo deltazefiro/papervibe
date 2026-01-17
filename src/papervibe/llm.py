@@ -170,8 +170,12 @@ Remember: Only add \\pvgray{{}} wrappers around less important sentences. Do not
                 result = response.choices[0].message.parsed
                 return result.content
             except Exception as e:
-                # Re-raise to be handled by caller
-                raise Exception(f"Could not parse response content as {str(e)[:200]}")
+                error_str = str(e).lower()
+                # Check for token limit errors
+                if any(keyword in error_str for keyword in ['token', 'length', 'context_length', 'too long']):
+                    raise Exception(f"Token limit exceeded: chunk is too large ({len(chunk)} chars)")
+                # Re-raise other errors
+                raise Exception(f"LLM API error: {str(e)[:200]}")
     
     async def gray_out_chunks_parallel(
         self,
