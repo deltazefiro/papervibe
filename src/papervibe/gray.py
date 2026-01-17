@@ -11,7 +11,7 @@ class GrayPipelineError(Exception):
     pass
 
 
-def chunk_content(content: str, max_chunk_size: int = 3000) -> List[str]:
+def chunk_content(content: str, max_chunk_size: int = 2500) -> List[str]:
     """
     Split content into chunks for parallel processing.
     
@@ -143,6 +143,7 @@ async def gray_out_content(
                 if attempt < max_retries:
                     continue
                 # All retries failed, use original
+                print(f"   Warning: Chunk {i+1}/{len(chunks)} failed after {max_retries+1} attempts: {str(e)[:100]}")
                 grayed_chunk = chunk
                 success = True
                 break
@@ -181,20 +182,36 @@ async def gray_out_content_parallel(
         return content
     
     # Process all chunks in parallel (first attempt)
-    grayed_chunks = await llm_client.gray_out_chunks_parallel(chunks, gray_ratio)
+    try:
+        grayed_chunks = await llm_client.gray_out_chunks_parallel(chunks, gray_ratio)
+    except Exception as e:
+        # If parallel processing fails entirely, fall back to original content
+        print(f"   Warning: Parallel gray processing failed: {str(e)[:100]}")
+        return content
     
     # Validate and retry if needed
     final_chunks = []
-    for original, grayed in zip(chunks, grayed_chunks):
-        if validate_grayed_chunk(original, grayed):
-            final_chunks.append(grayed)
-        else:
-            # Retry once
-            retry_result = await llm_client.gray_out_chunk(original, gray_ratio)
-            if validate_grayed_chunk(original, retry_result):
-                final_chunks.append(retry_result)
+    for i, (original, grayed) in enumerate(zip(chunks, grayed_chunks)):
+        try:
+            if validate_grayed_chunk(original, grayed):
+                final_chunks.append(grayed)
             else:
-                # Use original if validation still fails
-                final_chunks.append(original)
+                # Retry once
+                try:
+                    retry_result = await llm_client.gray_out_chunk(original, gray_ratio)
+                    if validate_grayed_chunk(original, retry_result):
+                        final_chunks.append(retry_result)
+                    else:
+                        # Use original if validation still fails
+                        print(f"   Warning: Chunk {i+1}/{len(chunks)} validation failed after retry, using original")
+                        final_chunks.append(original)
+                except Exception as e:
+                    # Retry failed, use original
+                    print(f"   Warning: Chunk {i+1}/{len(chunks)} retry failed: {str(e)[:80]}, using original")
+                    final_chunks.append(original)
+        except Exception as e:
+            # Validation or other error, use original
+            print(f"   Warning: Chunk {i+1}/{len(chunks)} processing failed: {str(e)[:80]}, using original")
+            final_chunks.append(original)
     
     return '\n\n'.join(final_chunks)

@@ -122,6 +122,9 @@ Provide the rewritten abstract."""
             
         Returns:
             Chunk with \\pvgray{} wrappers around less important sentences
+            
+        Raises:
+            Exception: If LLM call fails (including token limit errors)
         """
         if self.dry_run:
             return chunk
@@ -152,18 +155,23 @@ Rules:
 
 Remember: Only add \\pvgray{{}} wrappers around less important sentences. Do not modify any other text."""
 
-            response = await self.client.beta.chat.completions.parse(
-                model=self.settings.light_model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                response_format=GrayedChunk,
-                temperature=0.3,
-            )
-            
-            result = response.choices[0].message.parsed
-            return result.content
+            try:
+                response = await self.client.beta.chat.completions.parse(
+                    model=self.settings.light_model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    response_format=GrayedChunk,
+                    temperature=0.3,
+                    max_completion_tokens=16000,  # Use almost the full 16K limit for gpt-4o-mini
+                )
+                
+                result = response.choices[0].message.parsed
+                return result.content
+            except Exception as e:
+                # Re-raise to be handled by caller
+                raise Exception(f"Could not parse response content as {str(e)[:200]}")
     
     async def gray_out_chunks_parallel(
         self,
@@ -178,7 +186,15 @@ Remember: Only add \\pvgray{{}} wrappers around less important sentences. Do not
             gray_ratio: Target ratio of text to gray out
             
         Returns:
-            List of processed chunks with graying applied
+            List of processed chunks with graying applied (or original on error)
         """
-        tasks = [self.gray_out_chunk(chunk, gray_ratio) for chunk in chunks]
+        async def process_chunk_safe(chunk: str) -> str:
+            """Process a single chunk with error handling."""
+            try:
+                return await self.gray_out_chunk(chunk, gray_ratio)
+            except Exception as e:
+                # Return original chunk on error (will be caught by validation later)
+                return chunk
+        
+        tasks = [process_chunk_safe(chunk) for chunk in chunks]
         return await asyncio.gather(*tasks)

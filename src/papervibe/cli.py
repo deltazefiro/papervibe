@@ -201,9 +201,72 @@ async def _process_arxiv_paper(
             except Exception as e:
                 typer.echo(f"   Warning: Failed to process {input_file.name}: {e}")
         
-        if modified_input_files:
-            typer.echo(f"   Processed {len(modified_input_files)} input files ({total_chars_processed} chars)")
+        # Also process main file content (excluding abstract and references)
+        # Find references cutoff to exclude references section
+        cutoff = find_references_cutoff(modified_content)
+        
+        # Find abstract span to exclude from graying
+        abstract_span = get_abstract_span(modified_content)
+        
+        # Determine what content from main file to process
+        main_content_to_process = modified_content
+        if cutoff is not None:
+            main_content_to_process = modified_content[:cutoff]
+        
+        # Exclude abstract if present
+        if abstract_span is not None:
+            abs_start, abs_end = abstract_span
+            if abs_end <= len(main_content_to_process):
+                # Process content before and after abstract
+                before_abstract = main_content_to_process[:abs_start]
+                after_abstract = main_content_to_process[abs_end:]
+                main_parts_to_gray = [before_abstract, after_abstract]
+            else:
+                # Abstract extends beyond cutoff, just process up to cutoff
+                main_parts_to_gray = [main_content_to_process]
         else:
+            main_parts_to_gray = [main_content_to_process]
+        
+        # Gray out main file content
+        grayed_main_parts = []
+        main_chars_processed = 0
+        for part in main_parts_to_gray:
+            if part.strip():
+                grayed_part = await gray_out_content_parallel(
+                    part,
+                    llm_client,
+                    gray_ratio=gray_ratio,
+                )
+                grayed_main_parts.append(grayed_part)
+                main_chars_processed += len(part)
+            else:
+                grayed_main_parts.append(part)
+        
+        # Reconstruct modified_content
+        post_refs = modified_content[cutoff:] if cutoff is not None else ""
+        
+        if abstract_span is not None:
+            abs_start, abs_end = abstract_span
+            if abs_end <= len(main_content_to_process):
+                abstract_region = modified_content[abs_start:abs_end]
+                if len(grayed_main_parts) == 2:
+                    modified_content = grayed_main_parts[0] + abstract_region + grayed_main_parts[1] + post_refs
+                else:
+                    modified_content = grayed_main_parts[0] + post_refs
+            else:
+                if len(grayed_main_parts) > 0:
+                    modified_content = grayed_main_parts[0] + post_refs
+        else:
+            if len(grayed_main_parts) > 0:
+                modified_content = grayed_main_parts[0] + post_refs
+        
+        if modified_input_files:
+            typer.echo(f"   Processed {len(modified_input_files)} input files ({total_chars_processed} chars) + main file ({main_chars_processed} chars)")
+        elif main_chars_processed > 0:
+            typer.echo(f"   Processed main file ({main_chars_processed} chars)")
+        
+        # Old fallback logic (no longer used, but kept for reference)
+        if False:
             # Fallback to old behavior if no input files found
             # Find references cutoff to exclude references section
             cutoff = find_references_cutoff(modified_content)
