@@ -72,9 +72,9 @@ def validate_grayed_chunk(original: str, grayed: str) -> bool:
     """
     stripped = strip_pvgray_wrappers(grayed)
     
-    # Normalize whitespace for comparison (allow line-ending differences)
-    original_normalized = ' '.join(original.split())
-    stripped_normalized = ' '.join(stripped.split())
+    # Only normalize line endings (CRLF -> LF), no other whitespace changes
+    original_normalized = original.replace('\r\n', '\n')
+    stripped_normalized = stripped.replace('\r\n', '\n')
     
     return original_normalized == stripped_normalized
 

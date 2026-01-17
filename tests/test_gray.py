@@ -72,12 +72,12 @@ def test_validate_grayed_chunk_no_changes():
     assert validate_grayed_chunk(original, grayed) is True
 
 
-def test_validate_grayed_chunk_whitespace_normalization():
-    """Test that validation handles whitespace differences."""
-    original = "This is a sentence.\n\nThis is another sentence."
-    grayed = "This is a sentence. \\pvgray{This is another sentence.}"
+def test_validate_grayed_chunk_line_ending_normalization():
+    """Test that validation handles line-ending differences only."""
+    original = "This is a sentence.\r\nThis is another sentence."
+    grayed = "This is a sentence.\n\\pvgray{This is another sentence.}"
     
-    # Should be valid due to whitespace normalization
+    # Should be valid due to line-ending normalization only
     assert validate_grayed_chunk(original, grayed) is True
 
 
@@ -112,3 +112,16 @@ async def test_gray_out_content_parallel_empty():
     result = await gray_out_content_parallel("", client, gray_ratio=0.4)
     
     assert result == ""
+
+
+def test_validate_grayed_chunk_strict_whitespace():
+    """Test that validation is strict about whitespace (not collapsing)."""
+    original = "Line one.\n\nLine two."
+    # This has collapsed whitespace, should fail strict validation
+    grayed_wrong = "Line one. \\pvgray{Line two.}"
+    
+    assert validate_grayed_chunk(original, grayed_wrong) is False
+    
+    # This preserves the double newline, should pass
+    grayed_correct = "Line one.\n\n\\pvgray{Line two.}"
+    assert validate_grayed_chunk(original, grayed_correct) is True

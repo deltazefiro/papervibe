@@ -11,6 +11,7 @@ from papervibe.latex import (
     find_main_tex_file,
     find_references_cutoff,
     extract_abstract,
+    get_abstract_span,
     replace_abstract,
     inject_preamble,
     LatexError,
@@ -66,7 +67,7 @@ async def _process_arxiv_paper(
     """Internal async function to process an arXiv paper."""
     
     # Step 1: Parse arXiv ID
-    typer.echo(f"📄 Parsing arXiv ID from: {url}")
+    typer.echo(f"Parsing arXiv ID from: {url}")
     arxiv_id, version = parse_arxiv_id(url)
     typer.echo(f"   arXiv ID: {arxiv_id}{version or ''}")
     
@@ -80,14 +81,14 @@ async def _process_arxiv_paper(
     typer.echo(f"   Output directory: {out}")
     
     # Step 3: Download source
-    typer.echo(f"⬇️  Downloading arXiv source...")
+    typer.echo(f"Downloading arXiv source...")
     source_dir = out / "original"
     source_dir.mkdir(exist_ok=True)
     download_arxiv_source(arxiv_id, version, source_dir)
     typer.echo(f"   Downloaded to: {source_dir}")
     
     # Step 4: Find main .tex file
-    typer.echo(f"🔍 Finding main .tex file...")
+    typer.echo(f"Finding main .tex file...")
     main_tex = find_main_tex_file(source_dir)
     typer.echo(f"   Main file: {main_tex.name}")
     
@@ -100,7 +101,7 @@ async def _process_arxiv_paper(
     
     # Step 7: Rewrite abstract
     if not skip_abstract:
-        typer.echo(f"✍️  Rewriting abstract...")
+        typer.echo(f"Rewriting abstract...")
         abstract_result = extract_abstract(modified_content)
         
         if abstract_result:
@@ -112,44 +113,103 @@ async def _process_arxiv_paper(
             
             modified_content = replace_abstract(modified_content, new_abstract)
         else:
-            typer.echo(f"   ⚠️  No abstract found, skipping rewrite")
+            typer.echo(f"   Warning: No abstract found, skipping rewrite")
     
     # Step 8: Inject preamble (xcolor + \pvgray macro)
-    typer.echo(f"🎨 Injecting preamble...")
+    typer.echo(f"Injecting preamble...")
     modified_content = inject_preamble(modified_content)
     
     # Step 9: Gray out sentences
     if not skip_gray:
-        typer.echo(f"🖍️  Graying out less important sentences (ratio={gray_ratio})...")
+        typer.echo(f"Graying out less important sentences (ratio={gray_ratio})...")
         
         # Find references cutoff to exclude references section
         cutoff = find_references_cutoff(modified_content)
+        
+        # Find abstract span to exclude from graying
+        abstract_span = get_abstract_span(modified_content)
         
         if cutoff is not None:
             # Process only pre-references content
             pre_refs = modified_content[:cutoff]
             post_refs = modified_content[cutoff:]
             
-            # Gray out pre-references content
-            grayed_pre_refs = await gray_out_content_parallel(
-                pre_refs,
-                llm_client,
-                gray_ratio=gray_ratio,
-            )
-            
-            modified_content = grayed_pre_refs + post_refs
-            typer.echo(f"   Processed {len(pre_refs)} chars (excluded references)")
+            # Exclude abstract from graying
+            if abstract_span is not None:
+                abs_start, abs_end = abstract_span
+                if abs_end <= cutoff:
+                    # Abstract is before references, split content into 3 parts
+                    before_abstract = pre_refs[:abs_start]
+                    abstract_region = pre_refs[abs_start:abs_end]
+                    after_abstract = pre_refs[abs_end:]
+                    
+                    # Gray out only before and after abstract
+                    grayed_before = await gray_out_content_parallel(
+                        before_abstract,
+                        llm_client,
+                        gray_ratio=gray_ratio,
+                    ) if before_abstract.strip() else before_abstract
+                    
+                    grayed_after = await gray_out_content_parallel(
+                        after_abstract,
+                        llm_client,
+                        gray_ratio=gray_ratio,
+                    ) if after_abstract.strip() else after_abstract
+                    
+                    modified_content = grayed_before + abstract_region + grayed_after + post_refs
+                    typer.echo(f"   Processed {len(before_abstract) + len(after_abstract)} chars (excluded abstract and references)")
+                else:
+                    # Abstract is after references (unlikely), just exclude references
+                    grayed_pre_refs = await gray_out_content_parallel(
+                        pre_refs,
+                        llm_client,
+                        gray_ratio=gray_ratio,
+                    )
+                    modified_content = grayed_pre_refs + post_refs
+                    typer.echo(f"   Processed {len(pre_refs)} chars (excluded references)")
+            else:
+                # No abstract found, just exclude references
+                grayed_pre_refs = await gray_out_content_parallel(
+                    pre_refs,
+                    llm_client,
+                    gray_ratio=gray_ratio,
+                )
+                modified_content = grayed_pre_refs + post_refs
+                typer.echo(f"   Processed {len(pre_refs)} chars (excluded references)")
         else:
-            # No references found, process entire content
-            modified_content = await gray_out_content_parallel(
-                modified_content,
-                llm_client,
-                gray_ratio=gray_ratio,
-            )
-            typer.echo(f"   Processed entire document")
+            # No references found
+            if abstract_span is not None:
+                abs_start, abs_end = abstract_span
+                before_abstract = modified_content[:abs_start]
+                abstract_region = modified_content[abs_start:abs_end]
+                after_abstract = modified_content[abs_end:]
+                
+                # Gray out only before and after abstract
+                grayed_before = await gray_out_content_parallel(
+                    before_abstract,
+                    llm_client,
+                    gray_ratio=gray_ratio,
+                ) if before_abstract.strip() else before_abstract
+                
+                grayed_after = await gray_out_content_parallel(
+                    after_abstract,
+                    llm_client,
+                    gray_ratio=gray_ratio,
+                ) if after_abstract.strip() else after_abstract
+                
+                modified_content = grayed_before + abstract_region + grayed_after
+                typer.echo(f"   Processed entire document (excluded abstract)")
+            else:
+                # No abstract found, process entire content
+                modified_content = await gray_out_content_parallel(
+                    modified_content,
+                    llm_client,
+                    gray_ratio=gray_ratio,
+                )
+                typer.echo(f"   Processed entire document")
     
     # Step 10: Write modified files
-    typer.echo(f"💾 Writing modified files...")
+    typer.echo(f"Writing modified files...")
     modified_dir = out / "modified"
     modified_dir.mkdir(exist_ok=True)
     
@@ -166,22 +226,22 @@ async def _process_arxiv_paper(
     # Step 11: Compile PDF
     if not skip_compile:
         if not check_latexmk_available():
-            typer.echo(f"   ⚠️  latexmk not found, skipping compilation")
+            typer.echo(f"   Warning: latexmk not found, skipping compilation")
         else:
-            typer.echo(f"📦 Compiling PDF...")
+            typer.echo(f"Compiling PDF...")
             pdf_path, log = compile_latex(
                 modified_main,
                 output_dir=modified_dir,
                 timeout=300,
             )
-            typer.echo(f"   ✅ PDF compiled: {pdf_path}")
+            typer.echo(f"   Success: PDF compiled: {pdf_path}")
             
             # Copy PDF to output root for convenience
             final_pdf = out / f"{arxiv_id.replace('/', '_')}.pdf"
             shutil.copy2(pdf_path, final_pdf)
-            typer.echo(f"   📄 Final PDF: {final_pdf}")
+            typer.echo(f"   Final PDF: {final_pdf}")
     
-    typer.echo(f"\n✅ Processing complete!")
+    typer.echo(f"\nProcessing complete!")
     typer.echo(f"   Original sources: {source_dir}")
     typer.echo(f"   Modified sources: {modified_dir}")
     if not skip_compile and check_latexmk_available():

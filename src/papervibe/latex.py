@@ -133,6 +133,23 @@ def extract_abstract(content: str) -> Optional[Tuple[str, int, int]]:
     return abstract_text, start, end
 
 
+def get_abstract_span(content: str) -> Optional[Tuple[int, int]]:
+    """
+    Get the character span of the abstract region (including begin/end tags).
+    
+    Args:
+        content: LaTeX file content
+        
+    Returns:
+        Tuple of (start_offset, end_offset) or None if not found
+    """
+    result = extract_abstract(content)
+    if result is None:
+        return None
+    _, start, end = result
+    return start, end
+
+
 def replace_abstract(content: str, new_abstract: str) -> str:
     """
     Replace the abstract in LaTeX content with a new one.
