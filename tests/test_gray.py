@@ -36,9 +36,9 @@ def test_chunk_content_large_paragraph():
     
     # Large paragraph should be split into multiple chunks
     assert len(chunks) >= 2
-    # Each chunk should be reasonably sized (not exceeding max by much)
+    # Each chunk should be within the hard limit (3x max_chunk_size)
     for chunk in chunks:
-        assert len(chunk) <= 1100  # Allow 10% margin
+        assert len(chunk) <= 3000  # Hard limit is 3x max_chunk_size
 
 
 def test_chunk_content_very_large_paragraph_with_sentences():

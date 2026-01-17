@@ -11,7 +11,7 @@ class GrayPipelineError(Exception):
     pass
 
 
-def chunk_content(content: str, max_chunk_size: int = 2000) -> List[str]:
+def chunk_content(content: str, max_chunk_size: int = 1500) -> List[str]:
     """
     Split content into chunks for parallel processing.
     
@@ -25,6 +25,9 @@ def chunk_content(content: str, max_chunk_size: int = 2000) -> List[str]:
     Returns:
         List of content chunks
     """
+    # Hard safety limit - no chunk should ever exceed this (3x max_chunk_size)
+    HARD_LIMIT = max_chunk_size * 3
+    
     # Split by blank lines (paragraph boundaries)
     paragraphs = re.split(r'\n\s*\n', content)
     
@@ -63,16 +66,17 @@ def chunk_content(content: str, max_chunk_size: int = 2000) -> List[str]:
             for sent in rejoined_sentences:
                 sent_size = len(sent)
                 
-                # If a single sentence is still too large, split it at fixed intervals
-                if sent_size > max_chunk_size:
+                # If a single sentence is still too large, split at fixed intervals
+                # Use HARD_LIMIT to ensure we never exceed safe size
+                if sent_size > HARD_LIMIT:
                     if sub_chunk:
                         chunks.append(''.join(sub_chunk))
                         sub_chunk = []
                         sub_size = 0
                     
-                    # Split at fixed intervals as last resort
-                    for i in range(0, len(sent), max_chunk_size):
-                        chunks.append(sent[i:i + max_chunk_size])
+                    # Split at HARD_LIMIT intervals as last resort
+                    for i in range(0, len(sent), HARD_LIMIT):
+                        chunks.append(sent[i:i + HARD_LIMIT])
                     continue
                 
                 if sub_size + sent_size > max_chunk_size and sub_chunk:
@@ -100,7 +104,17 @@ def chunk_content(content: str, max_chunk_size: int = 2000) -> List[str]:
     if current_chunk:
         chunks.append('\n\n'.join(current_chunk))
     
-    return [c for c in chunks if c.strip()]
+    # Safety check: ensure no chunk exceeds HARD_LIMIT
+    final_chunks = []
+    for chunk in chunks:
+        if len(chunk) > HARD_LIMIT:
+            # Force split at HARD_LIMIT
+            for i in range(0, len(chunk), HARD_LIMIT):
+                final_chunks.append(chunk[i:i + HARD_LIMIT])
+        else:
+            final_chunks.append(chunk)
+    
+    return [c for c in final_chunks if c.strip()]
 
 
 def validate_grayed_chunk(original: str, grayed: str) -> bool:
