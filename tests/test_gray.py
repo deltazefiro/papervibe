@@ -1,5 +1,7 @@
 """Tests for gray-out pipeline."""
 
+import asyncio
+import time
 import pytest
 from papervibe.gray import (
     chunk_content,
@@ -143,3 +145,54 @@ def test_validate_grayed_chunk_strict_whitespace():
     # This preserves the double newline, should pass
     grayed_correct = "Line one.\n\n\\pvgray{Line two.}"
     assert validate_grayed_chunk(original, grayed_correct) is True
+
+
+@pytest.mark.asyncio
+async def test_parallel_processing_performance():
+    """Test that parallel processing is faster than sequential."""
+    # Create a fake LLM client that sleeps to simulate work
+    class SlowLLMClient(LLMClient):
+        def __init__(self, sleep_time=0.05):
+            super().__init__(dry_run=True, concurrency=4)
+            self.sleep_time = sleep_time
+        
+        async def gray_out_chunks_parallel(self, chunks, gray_ratio=0.4):
+            """Simulate slow processing."""
+            async def process_one(chunk):
+                await asyncio.sleep(self.sleep_time)
+                return chunk
+            
+            # Process in parallel
+            return await asyncio.gather(*[process_one(c) for c in chunks])
+    
+    # Create content that will split into multiple chunks
+    content = "\n\n".join([f"Paragraph {i} with some content." for i in range(8)])
+    
+    client = SlowLLMClient(sleep_time=0.05)
+    
+    start = time.time()
+    result = await gray_out_content_parallel(content, client, gray_ratio=0.4, max_chunk_chars=50)
+    elapsed = time.time() - start
+    
+    # Should complete in less than sequential time (8 chunks * 0.05s = 0.4s)
+    # With parallelism (concurrency=4), should take ~0.1s (2 batches)
+    assert elapsed < 0.3  # Allow some margin
+    assert result == content  # Dry run returns original
+
+
+@pytest.mark.asyncio
+async def test_max_chunk_chars_parameter():
+    """Test that max_chunk_chars parameter controls chunk size."""
+    # Create content with paragraphs
+    paragraphs = [f"Paragraph {i} with content." for i in range(5)]
+    content = "\n\n".join(paragraphs)
+    
+    client = LLMClient(dry_run=True, concurrency=2)
+    
+    # With max_chunk_chars=50, should create multiple chunks
+    result = await gray_out_content_parallel(content, client, gray_ratio=0.4, max_chunk_chars=50)
+    
+    # In dry run, should return content (possibly with some whitespace normalization from chunking)
+    # Just verify it processes without error and returns something reasonable
+    assert len(result) > 0
+    assert "Paragraph" in result

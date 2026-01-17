@@ -217,6 +217,7 @@ async def gray_out_content_parallel(
     llm_client: LLMClient,
     gray_ratio: float = 0.4,
     max_retries: int = 2,
+    max_chunk_chars: int = 1500,
 ) -> str:
     """
     Gray out content with parallel chunk processing.
@@ -229,12 +230,13 @@ async def gray_out_content_parallel(
         llm_client: LLM client for processing
         gray_ratio: Target ratio of sentences to gray out
         max_retries: Number of retries per chunk if validation fails
+        max_chunk_chars: Maximum characters per chunk
         
     Returns:
         Content with \\pvgray{} wrappers applied
     """
     # Split into chunks
-    chunks = chunk_content(content)
+    chunks = chunk_content(content, max_chunk_size=max_chunk_chars)
     
     if not chunks:
         return content

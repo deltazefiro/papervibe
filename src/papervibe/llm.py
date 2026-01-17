@@ -17,6 +17,7 @@ class LLMSettings(BaseSettings):
     openai_base_url: Optional[str] = None
     strong_model: str = "gpt-4o"
     light_model: str = "gpt-4o-mini"
+    request_timeout_seconds: float = 30.0
 
 
 class RewrittenAbstract(BaseModel):
@@ -95,18 +96,25 @@ Do NOT:
 
 Provide the rewritten abstract."""
 
-            response = await self.client.beta.chat.completions.parse(
-                model=self.settings.strong_model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                response_format=RewrittenAbstract,
-                temperature=0.7,
-            )
-            
-            result = response.choices[0].message.parsed
-            return result.abstract
+            try:
+                response = await asyncio.wait_for(
+                    self.client.beta.chat.completions.parse(
+                        model=self.settings.strong_model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        response_format=RewrittenAbstract,
+                        temperature=0.7,
+                    ),
+                    timeout=self.settings.request_timeout_seconds,
+                )
+                
+                result = response.choices[0].message.parsed
+                return result.abstract
+            except asyncio.TimeoutError:
+                print(f"   Warning: Abstract rewrite timed out after {self.settings.request_timeout_seconds}s, using original")
+                return original_abstract
     
     async def gray_out_chunk(
         self,
@@ -156,19 +164,25 @@ Rules:
 Remember: Only add \\pvgray{{}} wrappers around less important sentences. Do not modify any other text."""
 
             try:
-                response = await self.client.beta.chat.completions.parse(
-                    model=self.settings.light_model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    response_format=GrayedChunk,
-                    temperature=0.3,
-                    max_completion_tokens=16000,  # Use almost the full 16K limit for gpt-4o-mini
+                response = await asyncio.wait_for(
+                    self.client.beta.chat.completions.parse(
+                        model=self.settings.light_model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        response_format=GrayedChunk,
+                        temperature=0.3,
+                        max_completion_tokens=16000,  # Use almost the full 16K limit for gpt-4o-mini
+                    ),
+                    timeout=self.settings.request_timeout_seconds,
                 )
                 
                 result = response.choices[0].message.parsed
                 return result.content
+            except asyncio.TimeoutError:
+                # On timeout, return original chunk
+                return chunk
             except Exception as e:
                 error_str = str(e).lower()
                 # Check for token limit errors

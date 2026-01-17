@@ -51,6 +51,8 @@ def _process_arxiv_command(
     gray_ratio: float,
     concurrency: int,
     dry_run: bool,
+    llm_timeout: float,
+    max_chunk_chars: int,
 ):
     """Shared implementation for arXiv processing."""
     try:
@@ -63,6 +65,8 @@ def _process_arxiv_command(
             gray_ratio=gray_ratio,
             concurrency=concurrency,
             dry_run=dry_run,
+            llm_timeout=llm_timeout,
+            max_chunk_chars=max_chunk_chars,
         ))
     except (ArxivError, LatexError, CompileError) as e:
         typer.echo(f"Error: {e}", err=True)
@@ -83,8 +87,10 @@ def cmd_arxiv(
     gray_ratio: float = typer.Option(0.4, help="Target ratio of sentences to gray out"),
     concurrency: int = typer.Option(8, help="Number of concurrent LLM requests"),
     dry_run: bool = typer.Option(False, help="Dry run mode (skip LLM calls)"),
+    llm_timeout: float = typer.Option(30.0, help="Timeout per LLM request in seconds"),
+    max_chunk_chars: int = typer.Option(1500, help="Max characters per chunk for graying"),
 ):
-    _process_arxiv_command(url, out, skip_abstract, skip_gray, skip_compile, gray_ratio, concurrency, dry_run)
+    _process_arxiv_command(url, out, skip_abstract, skip_gray, skip_compile, gray_ratio, concurrency, dry_run, llm_timeout, max_chunk_chars)
 
 
 # Compat alias: papervibe <url> (default command for backward compatibility)
@@ -98,8 +104,10 @@ def main(
     gray_ratio: float = typer.Option(0.4, help="Target ratio of sentences to gray out"),
     concurrency: int = typer.Option(8, help="Number of concurrent LLM requests"),
     dry_run: bool = typer.Option(False, help="Dry run mode (skip LLM calls)"),
+    llm_timeout: float = typer.Option(30.0, help="Timeout per LLM request in seconds"),
+    max_chunk_chars: int = typer.Option(1500, help="Max characters per chunk for graying"),
 ):
-    _process_arxiv_command(url, out, skip_abstract, skip_gray, skip_compile, gray_ratio, concurrency, dry_run)
+    _process_arxiv_command(url, out, skip_abstract, skip_gray, skip_compile, gray_ratio, concurrency, dry_run, llm_timeout, max_chunk_chars)
 
 
 async def _process_arxiv_paper(
@@ -111,6 +119,8 @@ async def _process_arxiv_paper(
     gray_ratio: float,
     concurrency: int,
     dry_run: bool,
+    llm_timeout: float,
+    max_chunk_chars: int,
 ):
     """Internal async function to process an arXiv paper."""
     
@@ -145,7 +155,10 @@ async def _process_arxiv_paper(
     modified_content = original_content
     
     # Step 6: Initialize LLM client
-    llm_client = LLMClient(concurrency=concurrency, dry_run=dry_run)
+    from papervibe.llm import LLMSettings
+    settings = LLMSettings()
+    settings.request_timeout_seconds = llm_timeout
+    llm_client = LLMClient(settings=settings, concurrency=concurrency, dry_run=dry_run)
     
     # Initialize modified input files dictionary (used for abstract rewrite and gray stage)
     modified_input_files = {}
@@ -206,8 +219,8 @@ async def _process_arxiv_paper(
         # Find all input files referenced by main.tex
         input_files = find_input_files(modified_content, source_dir)
         
-        # Process each input file separately
-        total_chars_processed = 0
+        # Prepare list of files to process (excluding already-processed and abstract-containing files)
+        files_to_process = []
         for input_file in input_files:
             # Skip if we already processed this file during abstract rewrite
             if input_file in modified_input_files:
@@ -222,18 +235,37 @@ async def _process_arxiv_paper(
                     typer.echo(f"   Skipping {input_file.name} (contains abstract)")
                     continue
                 
-                # Gray out this file's content
-                grayed_input = await gray_out_content_parallel(
-                    input_content,
+                files_to_process.append((input_file, input_content))
+            except Exception as e:
+                typer.echo(f"   Warning: Failed to read {input_file.name}: {e}")
+        
+        # Process all input files in parallel
+        async def process_input_file(file_path, content):
+            """Process a single input file."""
+            try:
+                grayed = await gray_out_content_parallel(
+                    content,
                     llm_client,
                     gray_ratio=gray_ratio,
+                    max_chunk_chars=max_chunk_chars,
                 )
-                
-                modified_input_files[input_file] = grayed_input
-                total_chars_processed += len(input_content)
-                
+                return (file_path, grayed, len(content))
             except Exception as e:
-                typer.echo(f"   Warning: Failed to process {input_file.name}: {e}")
+                typer.echo(f"   Warning: Failed to process {file_path.name}: {e}")
+                return (file_path, content, 0)  # Return original on error
+        
+        # Process all files in parallel
+        if files_to_process:
+            results = await asyncio.gather(*[
+                process_input_file(fp, content) for fp, content in files_to_process
+            ])
+            
+            total_chars_processed = 0
+            for file_path, grayed_content, chars_processed in results:
+                modified_input_files[file_path] = grayed_content
+                total_chars_processed += chars_processed
+        else:
+            total_chars_processed = 0
         
         # Also process main file content (excluding abstract and references)
         # Find references cutoff to exclude references section
@@ -270,6 +302,7 @@ async def _process_arxiv_paper(
                     part,
                     llm_client,
                     gray_ratio=gray_ratio,
+                    max_chunk_chars=max_chunk_chars,
                 )
                 grayed_main_parts.append(grayed_part)
                 main_chars_processed += len(part)
