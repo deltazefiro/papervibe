@@ -363,94 +363,24 @@ async def _process_arxiv_paper(
         elif main_chars_processed > 0:
             typer.echo(f"   Processed main file ({main_chars_processed} chars)")
         
-        # Old fallback logic (no longer used, but kept for reference)
-        if False:
-            # Fallback to old behavior if no input files found
-            # Find references cutoff to exclude references section
-            cutoff = find_references_cutoff(modified_content)
-            
-            # Find abstract span to exclude from graying
-            abstract_span = get_abstract_span(modified_content)
-            
-            if cutoff is not None:
-                # Process only pre-references content
-                pre_refs = modified_content[:cutoff]
-                post_refs = modified_content[cutoff:]
-                
-                # Exclude abstract from graying
-                if abstract_span is not None:
-                    abs_start, abs_end = abstract_span
-                    if abs_end <= cutoff:
-                        # Abstract is before references, split content into 3 parts
-                        before_abstract = pre_refs[:abs_start]
-                        abstract_region = pre_refs[abs_start:abs_end]
-                        after_abstract = pre_refs[abs_end:]
-                        
-                        # Gray out only before and after abstract
-                        grayed_before = await gray_out_content_parallel(
-                            before_abstract,
-                            llm_client,
-                            gray_ratio=gray_ratio,
-                        ) if before_abstract.strip() else before_abstract
-                        
-                        grayed_after = await gray_out_content_parallel(
-                            after_abstract,
-                            llm_client,
-                            gray_ratio=gray_ratio,
-                        ) if after_abstract.strip() else after_abstract
-                        
-                        modified_content = grayed_before + abstract_region + grayed_after + post_refs
-                        typer.echo(f"   Processed {len(before_abstract) + len(after_abstract)} chars (excluded abstract and references)")
-                    else:
-                        # Abstract is after references (unlikely), just exclude references
-                        grayed_pre_refs = await gray_out_content_parallel(
-                            pre_refs,
-                            llm_client,
-                            gray_ratio=gray_ratio,
-                        )
-                        modified_content = grayed_pre_refs + post_refs
-                        typer.echo(f"   Processed {len(pre_refs)} chars (excluded references)")
+        # Step 9.1: Diagnostic summary
+        wrapper_count = modified_content.count(r"\pvgray{")
+        for content in modified_input_files.values():
+            wrapper_count += content.count(r"\pvgray{")
+        
+        if dry_run:
+            typer.echo(f"   [Dry Run] No \\pvgray{{}} wrappers actually added.")
+        elif not skip_gray and gray_ratio > 0:
+            if wrapper_count == 0:
+                typer.echo(f"   Warning: No graying was applied! (wrapper count: 0)")
+                if any(llm_client.stats.values()):
+                    typer.echo(f"   LLM Stats: {llm_client.stats}")
+                    typer.echo(f"   Hint: Some requests timed out or failed. Try increasing --llm-timeout or check LLM config.")
                 else:
-                    # No abstract found, just exclude references
-                    grayed_pre_refs = await gray_out_content_parallel(
-                        pre_refs,
-                        llm_client,
-                        gray_ratio=gray_ratio,
-                    )
-                    modified_content = grayed_pre_refs + post_refs
-                    typer.echo(f"   Processed {len(pre_refs)} chars (excluded references)")
+                    typer.echo(f"   Hint: The LLM might have decided not to gray out any sentences, or all edits failed validation.")
             else:
-                # No references found
-                if abstract_span is not None:
-                    abs_start, abs_end = abstract_span
-                    before_abstract = modified_content[:abs_start]
-                    abstract_region = modified_content[abs_start:abs_end]
-                    after_abstract = modified_content[abs_end:]
-                    
-                    # Gray out only before and after abstract
-                    grayed_before = await gray_out_content_parallel(
-                        before_abstract,
-                        llm_client,
-                        gray_ratio=gray_ratio,
-                    ) if before_abstract.strip() else before_abstract
-                    
-                    grayed_after = await gray_out_content_parallel(
-                        after_abstract,
-                        llm_client,
-                        gray_ratio=gray_ratio,
-                    ) if after_abstract.strip() else after_abstract
-                    
-                    modified_content = grayed_before + abstract_region + grayed_after
-                    typer.echo(f"   Processed entire document (excluded abstract)")
-                else:
-                    # No abstract found, process entire content
-                    modified_content = await gray_out_content_parallel(
-                        modified_content,
-                        llm_client,
-                        gray_ratio=gray_ratio,
-                    )
-                    typer.echo(f"   Processed entire document")
-    
+                typer.echo(f"   Applied {wrapper_count} \\pvgray{{}} wrappers.")
+
     # Step 10: Write modified files
     typer.echo(f"Writing modified files...")
     modified_dir = out / "modified"

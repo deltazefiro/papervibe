@@ -56,6 +56,12 @@ class LLMClient:
         self.dry_run = dry_run
         self.semaphore = asyncio.Semaphore(concurrency)
         self.prompt_renderer = get_renderer()
+        self.stats = {
+            "abstract_timeouts": 0,
+            "abstract_errors": 0,
+            "gray_timeouts": 0,
+            "gray_errors": 0,
+        }
         
         if not dry_run:
             self.client = AsyncOpenAI(
@@ -99,7 +105,11 @@ class LLMClient:
                 result = response.choices[0].message.parsed
                 return result.abstract
             except asyncio.TimeoutError:
+                self.stats["abstract_timeouts"] += 1
                 print(f"   Warning: Abstract rewrite timed out after {self.settings.request_timeout_seconds}s, using original")
+                return original_abstract
+            except Exception:
+                self.stats["abstract_errors"] += 1
                 return original_abstract
     
     async def gray_out_chunk(
@@ -146,6 +156,7 @@ class LLMClient:
                     return chunk
                 return result
             except asyncio.TimeoutError:
+                self.stats["gray_timeouts"] += 1
                 # On timeout, return original chunk
                 return chunk
             except Exception as e:
@@ -175,7 +186,8 @@ class LLMClient:
             """Process a single chunk with error handling."""
             try:
                 return await self.gray_out_chunk(chunk, gray_ratio)
-            except Exception as e:
+            except Exception:
+                self.stats["gray_errors"] += 1
                 # Return original chunk on error (will be caught by validation later)
                 return chunk
         
