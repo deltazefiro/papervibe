@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from openai import AsyncOpenAI
 
+from .prompts import get_renderer
+
 
 class LLMSettings(BaseSettings):
     """Settings for LLM API access."""
@@ -53,6 +55,7 @@ class LLMClient:
         self.settings = settings or LLMSettings()
         self.dry_run = dry_run
         self.semaphore = asyncio.Semaphore(concurrency)
+        self.prompt_renderer = get_renderer()
         
         if not dry_run:
             self.client = AsyncOpenAI(
@@ -76,25 +79,8 @@ class LLMClient:
             return original_abstract
         
         async with self.semaphore:
-            system_prompt = """You are an expert academic editor. Your task is to rewrite paper abstracts to be clearer, more engaging, and better structured while preserving all technical content and claims.
-
-Focus on:
-- Improving clarity and readability
-- Making the narrative flow more logical
-- Highlighting key contributions
-- Maintaining technical accuracy
-- Keeping similar length to the original
-
-Do NOT:
-- Add claims not in the original
-- Remove important technical details
-- Change the fundamental message"""
-
-            user_prompt = f"""Rewrite the following abstract to be clearer and more engaging:
-
-{original_abstract}
-
-Provide the rewritten abstract."""
+            system_prompt = self.prompt_renderer.render_rewrite_abstract_system()
+            user_prompt = self.prompt_renderer.render_rewrite_abstract_user(original_abstract)
 
             try:
                 response = await asyncio.wait_for(
@@ -138,34 +124,8 @@ Provide the rewritten abstract."""
             return chunk
         
         async with self.semaphore:
-            system_prompt = """You are an expert at identifying the most important information in academic papers. Your task is to mark less important sentences by wrapping them with \\pvgray{...}.
-
-Rules:
-1. Wrap approximately the specified ratio of sentences with \\pvgray{...}
-2. Prioritize graying out:
-   - Transitional phrases
-   - Obvious or well-known statements
-   - Less critical details or examples
-   - Redundant information
-3. Keep important:
-   - Key claims and contributions
-   - Novel results and findings
-   - Technical definitions
-   - Critical methodology
-4. NEVER gray out section headings, captions, or labels
-5. Return ONLY the modified chunk with wrappers added
-6. Do NOT change any text content except adding \\pvgray{} wrappers
-7. Preserve all LaTeX formatting, commands, and structure EXACTLY
-8. Preserve all whitespace, newlines, and indentation EXACTLY as in the original
-9. Do NOT add vspace, hspace, or any other spacing/formatting commands
-10. Do NOT use "..." as a placeholder - always include the complete original text
-11. The ONLY change should be wrapping sentences with \\pvgray{...} - nothing else"""
-
-            user_prompt = f"""Gray out approximately {gray_ratio*100:.0f}% of the less important sentences in this chunk by wrapping them with \\pvgray{{...}}:
-
-{chunk}
-
-CRITICAL: Return the text EXACTLY as provided, with ONLY \\pvgray{{...}} wrappers added. Preserve all whitespace, newlines, and formatting. Do not change anything else."""
+            system_prompt = self.prompt_renderer.render_gray_out_system()
+            user_prompt = self.prompt_renderer.render_gray_out_user(chunk, gray_ratio)
 
             try:
                 response = await asyncio.wait_for(
