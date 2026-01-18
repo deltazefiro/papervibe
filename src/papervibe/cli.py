@@ -6,6 +6,7 @@ import sys
 import typer
 from pathlib import Path
 from typing import Optional
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 
 from papervibe.arxiv import parse_arxiv_id, download_arxiv_source, ArxivError
 from papervibe.latex import (
@@ -19,7 +20,7 @@ from papervibe.latex import (
     LatexError,
 )
 from papervibe.llm import LLMClient
-from papervibe.gray import gray_out_content_parallel
+from papervibe.gray import gray_out_content_parallel, count_chunks
 from papervibe.compile import compile_latex, check_latexmk_available, CompileError
 
 app = typer.Typer(help="PaperVibe: Enhance arXiv papers with AI-powered abstract rewrites and smart highlighting")
@@ -239,35 +240,14 @@ async def _process_arxiv_paper(
             except Exception as e:
                 typer.echo(f"   Warning: Failed to read {input_file.name}: {e}")
         
-        # Process all input files in parallel
-        async def process_input_file(file_path, content):
-            """Process a single input file."""
-            try:
-                grayed = await gray_out_content_parallel(
-                    content,
-                    llm_client,
-                    gray_ratio=gray_ratio,
-                    max_chunk_chars=max_chunk_chars,
-                )
-                return (file_path, grayed, len(content))
-            except Exception as e:
-                typer.echo(f"   Warning: Failed to process {file_path.name}: {e}")
-                return (file_path, content, 0)  # Return original on error
+        # Count total chunks for progress bar
+        total_chunks = 0
         
-        # Process all files in parallel
-        if files_to_process:
-            results = await asyncio.gather(*[
-                process_input_file(fp, content) for fp, content in files_to_process
-            ])
-            
-            total_chars_processed = 0
-            for file_path, grayed_content, chars_processed in results:
-                modified_input_files[file_path] = grayed_content
-                total_chars_processed += chars_processed
-        else:
-            total_chars_processed = 0
+        # Count chunks from input files
+        for _, content in files_to_process:
+            total_chunks += count_chunks(content, max_chunk_chars=max_chunk_chars)
         
-        # Also process main file content (excluding abstract and references)
+        # Count chunks from main file
         # Find references cutoff to exclude references section
         cutoff = find_references_cutoff(modified_content)
         
@@ -293,21 +273,72 @@ async def _process_arxiv_paper(
         else:
             main_parts_to_gray = [main_content_to_process]
         
-        # Gray out main file content
-        grayed_main_parts = []
-        main_chars_processed = 0
+        # Count chunks from main parts
         for part in main_parts_to_gray:
             if part.strip():
-                grayed_part = await gray_out_content_parallel(
-                    part,
-                    llm_client,
-                    gray_ratio=gray_ratio,
-                    max_chunk_chars=max_chunk_chars,
-                )
-                grayed_main_parts.append(grayed_part)
-                main_chars_processed += len(part)
+                total_chunks += count_chunks(part, max_chunk_chars=max_chunk_chars)
+        
+        typer.echo(f"   Processing {total_chunks} chunks across {len(files_to_process)} input files + main file...")
+        
+        # Create progress bar
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            transient=False,
+        ) as progress:
+            task = progress.add_task("Graying chunks", total=total_chunks)
+            
+            def update_progress(advance: int = 1):
+                """Callback to update progress bar."""
+                progress.update(task, advance=advance)
+            
+            # Process all input files in parallel
+            async def process_input_file(file_path, content):
+                """Process a single input file."""
+                try:
+                    grayed = await gray_out_content_parallel(
+                        content,
+                        llm_client,
+                        gray_ratio=gray_ratio,
+                        max_chunk_chars=max_chunk_chars,
+                        progress_callback=update_progress,
+                    )
+                    return (file_path, grayed, len(content))
+                except Exception as e:
+                    typer.echo(f"   Warning: Failed to process {file_path.name}: {e}")
+                    return (file_path, content, 0)  # Return original on error
+            
+            # Process all files in parallel
+            if files_to_process:
+                results = await asyncio.gather(*[
+                    process_input_file(fp, content) for fp, content in files_to_process
+                ])
+                
+                total_chars_processed = 0
+                for file_path, grayed_content, chars_processed in results:
+                    modified_input_files[file_path] = grayed_content
+                    total_chars_processed += chars_processed
             else:
-                grayed_main_parts.append(part)
+                total_chars_processed = 0
+            
+            # Gray out main file content
+            grayed_main_parts = []
+            main_chars_processed = 0
+            for part in main_parts_to_gray:
+                if part.strip():
+                    grayed_part = await gray_out_content_parallel(
+                        part,
+                        llm_client,
+                        gray_ratio=gray_ratio,
+                        max_chunk_chars=max_chunk_chars,
+                        progress_callback=update_progress,
+                    )
+                    grayed_main_parts.append(grayed_part)
+                    main_chars_processed += len(part)
+                else:
+                    grayed_main_parts.append(part)
         
         # Reconstruct modified_content
         post_refs = modified_content[cutoff:] if cutoff is not None else ""

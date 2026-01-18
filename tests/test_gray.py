@@ -7,6 +7,7 @@ from papervibe.gray import (
     chunk_content,
     validate_grayed_chunk,
     gray_out_content_parallel,
+    count_chunks,
 )
 from papervibe.llm import LLMClient
 
@@ -196,3 +197,88 @@ async def test_max_chunk_chars_parameter():
     # Just verify it processes without error and returns something reasonable
     assert len(result) > 0
     assert "Paragraph" in result
+
+
+def test_count_chunks():
+    """Test counting chunks before processing."""
+    content = """First paragraph here.
+
+Second paragraph here.
+
+Third paragraph here.
+
+Fourth paragraph here."""
+    
+    # Count chunks with small max size
+    count = count_chunks(content, max_chunk_chars=50)
+    assert count > 0
+    
+    # Should match actual chunks created
+    chunks = chunk_content(content, max_chunk_size=50)
+    assert count == len(chunks)
+
+
+def test_count_chunks_empty():
+    """Test counting chunks with empty content."""
+    count = count_chunks("", max_chunk_chars=1500)
+    assert count == 0
+    
+    count = count_chunks("   \n\n  ", max_chunk_chars=1500)
+    assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_progress_callback():
+    """Test that progress callback is called correctly."""
+    content = """First paragraph here.
+
+Second paragraph here.
+
+Third paragraph here.
+
+Fourth paragraph here."""
+    
+    client = LLMClient(dry_run=True, concurrency=2)
+    
+    # Track progress calls
+    progress_calls = []
+    
+    def track_progress(advance: int):
+        progress_calls.append(advance)
+    
+    # Process with callback
+    await gray_out_content_parallel(
+        content,
+        client,
+        gray_ratio=0.4,
+        max_chunk_chars=50,
+        progress_callback=track_progress,
+    )
+    
+    # Should have been called once per chunk
+    expected_chunks = count_chunks(content, max_chunk_chars=50)
+    assert len(progress_calls) == expected_chunks
+    assert all(call == 1 for call in progress_calls)
+
+
+@pytest.mark.asyncio
+async def test_progress_callback_none():
+    """Test that processing works without a progress callback."""
+    content = """First paragraph here.
+
+Second paragraph here."""
+    
+    client = LLMClient(dry_run=True, concurrency=2)
+    
+    # Process without callback (should not crash)
+    result = await gray_out_content_parallel(
+        content,
+        client,
+        gray_ratio=0.4,
+        max_chunk_chars=50,
+        progress_callback=None,
+    )
+    
+    # In dry run, should return original
+    assert result == content
+

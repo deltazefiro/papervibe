@@ -1,7 +1,7 @@
 """Gray-out pipeline for LaTeX content."""
 
 import re
-from typing import List, Tuple
+from typing import List, Tuple, Optional, Callable
 from papervibe.latex import strip_pvgray_wrappers
 from papervibe.llm import LLMClient
 
@@ -212,12 +212,28 @@ async def gray_out_content(
     return '\n\n'.join(processed_chunks)
 
 
+def count_chunks(content: str, max_chunk_chars: int = 1500) -> int:
+    """
+    Count the number of chunks that will be created from content.
+    
+    Args:
+        content: LaTeX content to count chunks for
+        max_chunk_chars: Maximum characters per chunk
+        
+    Returns:
+        Number of chunks that will be created
+    """
+    chunks = chunk_content(content, max_chunk_size=max_chunk_chars)
+    return len(chunks)
+
+
 async def gray_out_content_parallel(
     content: str,
     llm_client: LLMClient,
     gray_ratio: float = 0.4,
     max_retries: int = 2,
     max_chunk_chars: int = 1500,
+    progress_callback: Optional[Callable[[int], None]] = None,
 ) -> str:
     """
     Gray out content with parallel chunk processing.
@@ -231,6 +247,7 @@ async def gray_out_content_parallel(
         gray_ratio: Target ratio of sentences to gray out
         max_retries: Number of retries per chunk if validation fails
         max_chunk_chars: Maximum characters per chunk
+        progress_callback: Optional callback to call after each chunk is processed
         
     Returns:
         Content with \\pvgray{} wrappers applied
@@ -273,5 +290,9 @@ async def gray_out_content_parallel(
             # Validation or other error, use original
             print(f"   Warning: Chunk {i+1}/{len(chunks)} processing failed: {str(e)[:80]}, using original")
             final_chunks.append(original)
+        
+        # Call progress callback after each chunk is processed
+        if progress_callback:
+            progress_callback(1)
     
     return '\n\n'.join(final_chunks)

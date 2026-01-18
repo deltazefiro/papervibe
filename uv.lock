@@ -254,6 +254,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pylatexenc" },
     { name = "python-dotenv" },
+    { name = "rich" },
     { name = "typer" },
 ]
 
@@ -271,6 +272,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.0.0" },
     { name = "pylatexenc", specifier = ">=2.10" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
+    { name = "rich", specifier = ">=13.0.0" },
     { name = "typer", specifier = ">=0.12.0" },
 ]
 
