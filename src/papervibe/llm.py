@@ -15,8 +15,8 @@ class LLMSettings(BaseSettings):
     
     openai_api_key: str
     openai_base_url: Optional[str] = None
-    strong_model: str = "gpt-4o"
-    light_model: str = "gpt-4o-mini"
+    strong_model: str = "gemini-3-pro-preview"
+    light_model: str = "gemini-3-flash-preview"
     request_timeout_seconds: float = 30.0
 
 
@@ -176,7 +176,7 @@ CRITICAL: Return the text EXACTLY as provided, with ONLY \\pvgray{{...}} wrapper
                             {"role": "user", "content": user_prompt},
                         ],
                         temperature=0.3,
-                        max_completion_tokens=16000,  # Use almost the full 16K limit for gpt-4o-mini
+                        max_completion_tokens=16000,  # Use almost the full 16K limit
                     ),
                     timeout=self.settings.request_timeout_seconds,
                 )

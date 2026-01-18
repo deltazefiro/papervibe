@@ -56,8 +56,8 @@ def test_llm_settings_from_env():
     assert len(settings.openai_api_key) > 0
     
     # Should have default models
-    assert settings.strong_model == "gpt-4o"
-    assert settings.light_model == "gpt-4o-mini"
+    assert settings.strong_model == "gemini-3-pro-preview"
+    assert settings.light_model == "gemini-3-flash-preview"
     
     # Should have default timeout
     assert settings.request_timeout_seconds == 30.0
