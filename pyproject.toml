@@ -16,13 +16,11 @@ dependencies = [
 ]
 
 [tool.hatch.build.targets.wheel]
-include = [
-    "src/papervibe/prompts/*.j2",
-]
+packages = ["src/papervibe"]
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "src/papervibe/prompts/*.j2",
+    "/src/papervibe",
 ]
 
 
