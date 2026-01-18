@@ -1,9 +1,10 @@
 """Gray-out pipeline for LaTeX content."""
 
 import re
+import sys
 from typing import List, Tuple, Optional, Callable
 from papervibe.latex import strip_pvgray_wrappers
-from papervibe.llm import LLMClient
+from papervibe.llm import LLMClient, is_retryable_error, print_error
 
 
 class GrayPipelineError(Exception):
@@ -198,10 +199,13 @@ async def gray_out_content(
                         break
                         
             except Exception as e:
-                if attempt < max_retries:
+                # Check if retryable
+                if is_retryable_error(e) and attempt < max_retries:
+                    print(f"   Retrying chunk {i+1}/{len(chunks)} (attempt {attempt + 2}/{max_retries + 1})...", file=sys.stderr)
                     continue
-                # All retries failed, use original
-                print(f"   Warning: Chunk {i+1}/{len(chunks)} failed after {max_retries+1} attempts: {str(e)[:100]}")
+
+                # Non-retryable error or max retries exceeded
+                print_error(e, context=f"Chunk {i+1}/{len(chunks)} failed after {attempt + 1} attempt(s)")
                 grayed_chunk = chunk
                 success = True
                 break
@@ -262,8 +266,8 @@ async def gray_out_content_parallel(
     try:
         grayed_chunks = await llm_client.gray_out_chunks_parallel(chunks, gray_ratio)
     except Exception as e:
-        # If parallel processing fails entirely, fall back to original content
-        print(f"   Warning: Parallel gray processing failed: {str(e)[:100]}")
+        # If parallel processing fails entirely, print error and fall back
+        print_error(e, context="Parallel gray processing failed entirely")
         return content
     
     # Validate and retry if needed
@@ -280,15 +284,15 @@ async def gray_out_content_parallel(
                         final_chunks.append(retry_result)
                     else:
                         # Use original if validation still fails
-                        print(f"   Warning: Chunk {i+1}/{len(chunks)} validation failed after retry, using original")
+                        print(f"   Warning: Chunk {i+1}/{len(chunks)} validation failed after retry, using original", file=sys.stderr)
                         final_chunks.append(original)
                 except Exception as e:
-                    # Retry failed, use original
-                    print(f"   Warning: Chunk {i+1}/{len(chunks)} retry failed: {str(e)[:80]}, using original")
+                    # Print full error on retry failure
+                    print_error(e, context=f"Chunk {i+1}/{len(chunks)} retry failed, using original")
                     final_chunks.append(original)
         except Exception as e:
-            # Validation or other error, use original
-            print(f"   Warning: Chunk {i+1}/{len(chunks)} processing failed: {str(e)[:80]}, using original")
+            # Validation or other error, print full error
+            print_error(e, context=f"Chunk {i+1}/{len(chunks)} processing failed, using original")
             final_chunks.append(original)
         
         # Call progress callback after each chunk is processed

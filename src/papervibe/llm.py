@@ -2,12 +2,115 @@
 
 import asyncio
 import json
-from typing import Optional, List
+import sys
+from typing import Optional, List, Callable, TypeVar, Any
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, RateLimitError, APIConnectionError, APITimeoutError
 
 from .prompts import get_renderer
+
+T = TypeVar('T')
+
+
+def is_retryable_error(error: Exception) -> bool:
+    """
+    Check if error should be retried (rate limit or network only).
+
+    Args:
+        error: Exception to check
+
+    Returns:
+        True if error is retryable (rate limit or network), False otherwise
+    """
+    # Rate limit errors (429)
+    if isinstance(error, RateLimitError):
+        return True
+
+    # Network connection errors (connection refused, DNS, etc.)
+    if isinstance(error, APIConnectionError):
+        return True
+
+    # API timeout errors (different from asyncio.TimeoutError)
+    if isinstance(error, APITimeoutError):
+        return True
+
+    # Check error message for rate limit indicators
+    error_str = str(error).lower()
+    if 'rate_limit' in error_str or 'rate limit' in error_str or '429' in error_str:
+        return True
+
+    return False
+
+
+def print_error(error: Exception, context: str = "") -> None:
+    """
+    Print full error message to stderr with context.
+
+    Args:
+        error: Exception to print
+        context: Optional context about what operation failed
+    """
+    error_type = type(error).__name__
+    error_msg = str(error)
+
+    # Extract status code if available
+    status_code = ""
+    if hasattr(error, 'status_code'):
+        status_code = f" (status: {error.status_code})"
+
+    # Print to stderr
+    if context:
+        print(f"   Error: {context}", file=sys.stderr)
+    print(f"   {error_type}{status_code}: {error_msg}", file=sys.stderr)
+
+
+async def retry_with_backoff(
+    func: Callable[[], Any],
+    max_retries: int = 3,
+    initial_delay: float = 2.0,
+    context: str = ""
+) -> Any:
+    """
+    Retry function with exponential backoff for retryable errors only.
+
+    Args:
+        func: Async function to retry
+        max_retries: Maximum number of retries (default: 3)
+        initial_delay: Initial delay in seconds (default: 2.0)
+        context: Context string for error messages
+
+    Returns:
+        Result of successful function call
+
+    Raises:
+        Exception: Re-raises the exception if non-retryable or max retries exceeded
+    """
+    delay = initial_delay
+    last_error = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            return await func()
+        except Exception as e:
+            last_error = e
+
+            # If this is not a retryable error, fail immediately
+            if not is_retryable_error(e):
+                raise
+
+            # If we've exhausted retries, raise
+            if attempt >= max_retries:
+                raise
+
+            # Otherwise, retry with backoff
+            print(f"   Retryable error (attempt {attempt + 1}/{max_retries + 1}), retrying in {delay}s...", file=sys.stderr)
+            await asyncio.sleep(delay)
+            delay *= 2  # Exponential backoff
+
+    # This should never be reached, but just in case
+    if last_error:
+        raise last_error
 
 
 class LLMSettings(BaseSettings):
@@ -74,22 +177,26 @@ class LLMClient:
     async def rewrite_abstract(self, original_abstract: str) -> str:
         """
         Rewrite an abstract to be more clear and engaging.
-        
+
         Args:
             original_abstract: Original abstract text
-            
+
         Returns:
             Rewritten abstract text
+
+        Raises:
+            Exception: On non-retryable errors (auth, invalid request, etc.)
         """
         if self.dry_run:
             return original_abstract
-        
+
         async with self.semaphore:
             system_prompt = self.prompt_renderer.render_rewrite_abstract_system()
             user_prompt = self.prompt_renderer.render_rewrite_abstract_user(original_abstract)
 
-            try:
-                response = await asyncio.wait_for(
+            async def _make_request():
+                """Inner function for retry logic."""
+                return await asyncio.wait_for(
                     self.client.beta.chat.completions.parse(
                         model=self.settings.strong_model,
                         messages=[
@@ -101,16 +208,26 @@ class LLMClient:
                     ),
                     timeout=self.settings.request_timeout_seconds,
                 )
-                
+
+            try:
+                response = await retry_with_backoff(
+                    _make_request,
+                    max_retries=3,
+                    context="abstract rewrite"
+                )
                 result = response.choices[0].message.parsed
                 return result.abstract
             except asyncio.TimeoutError:
+                # Timeout is graceful - use original abstract
                 self.stats["abstract_timeouts"] += 1
                 print(f"   Warning: Abstract rewrite timed out after {self.settings.request_timeout_seconds}s, using original")
                 return original_abstract
-            except Exception:
+            except Exception as e:
+                # Print full error and fail fast
                 self.stats["abstract_errors"] += 1
-                return original_abstract
+                print_error(e, context="Failed to rewrite abstract")
+                # Re-raise to fail fast
+                raise
     
     async def gray_out_chunk(
         self,
@@ -119,26 +236,27 @@ class LLMClient:
     ) -> str:
         """
         Gray out less important sentences in a text chunk.
-        
+
         Args:
             chunk: Text chunk to process
             gray_ratio: Target ratio of text to gray out (0.0 to 1.0)
-            
+
         Returns:
             Chunk with \\pvgray{} wrappers around less important sentences
-            
+
         Raises:
-            Exception: If LLM call fails (including token limit errors)
+            Exception: If LLM call fails (including token limit errors, auth errors, etc.)
         """
         if self.dry_run:
             return chunk
-        
+
         async with self.semaphore:
             system_prompt = self.prompt_renderer.render_gray_out_system()
             user_prompt = self.prompt_renderer.render_gray_out_user(chunk, gray_ratio)
 
-            try:
-                response = await asyncio.wait_for(
+            async def _make_request():
+                """Inner function for retry logic."""
+                return await asyncio.wait_for(
                     self.client.chat.completions.create(
                         model=self.settings.light_model,
                         messages=[
@@ -150,22 +268,31 @@ class LLMClient:
                     ),
                     timeout=self.settings.request_timeout_seconds,
                 )
-                
+
+            try:
+                response = await retry_with_backoff(
+                    _make_request,
+                    max_retries=3,
+                    context="gray out chunk"
+                )
+
                 result = response.choices[0].message.content
                 if result is None:
                     return chunk
                 return result
             except asyncio.TimeoutError:
+                # Timeout is graceful - return original chunk
                 self.stats["gray_timeouts"] += 1
-                # On timeout, return original chunk
                 return chunk
             except Exception as e:
+                # Check for token limit errors (these are non-retryable)
                 error_str = str(e).lower()
-                # Check for token limit errors
                 if any(keyword in error_str for keyword in ['token', 'length', 'context_length', 'too long']):
                     raise Exception(f"Token limit exceeded: chunk is too large ({len(chunk)} chars)")
-                # Re-raise other errors
-                raise Exception(f"LLM API error: {str(e)[:200]}")
+                # Print full error and re-raise
+                self.stats["gray_errors"] += 1
+                print_error(e, context=f"Failed to gray out chunk ({len(chunk)} chars)")
+                raise
     
     async def gray_out_chunks_parallel(
         self,
@@ -174,22 +301,24 @@ class LLMClient:
     ) -> List[str]:
         """
         Gray out multiple chunks in parallel with concurrency control.
-        
+
         Args:
             chunks: List of text chunks to process
             gray_ratio: Target ratio of text to gray out
-            
+
         Returns:
             List of processed chunks with graying applied (or original on error)
         """
-        async def process_chunk_safe(chunk: str) -> str:
+        async def process_chunk_safe(chunk: str, index: int) -> str:
             """Process a single chunk with error handling."""
             try:
                 return await self.gray_out_chunk(chunk, gray_ratio)
-            except Exception:
+            except Exception as e:
+                # Print full error details
                 self.stats["gray_errors"] += 1
+                print_error(e, context=f"Chunk {index + 1}/{len(chunks)} failed")
                 # Return original chunk on error (will be caught by validation later)
                 return chunk
-        
-        tasks = [process_chunk_safe(chunk) for chunk in chunks]
+
+        tasks = [process_chunk_safe(chunk, i) for i, chunk in enumerate(chunks)]
         return await asyncio.gather(*tasks)
