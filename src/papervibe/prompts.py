@@ -66,11 +66,11 @@ class PromptRenderer:
     def render_gray_out_user(self, chunk: str, gray_ratio: float) -> str:
         """
         Render user prompt for graying out sentences.
-        
+
         Args:
             chunk: The text chunk to process
             gray_ratio: Target ratio of text to gray out (0.0 to 1.0)
-            
+
         Returns:
             Rendered user prompt
         """
@@ -78,6 +78,28 @@ class PromptRenderer:
         return template.render(
             chunk=chunk,
             gray_ratio_percent=gray_ratio * 100,
+        )
+
+    def render_highlight_system(self) -> str:
+        """Render system prompt for highlighting content."""
+        template = self.env.get_template('highlight_system.j2')
+        return template.render()
+
+    def render_highlight_user(self, chunk: str, highlight_ratio: float) -> str:
+        """
+        Render user prompt for highlighting content.
+
+        Args:
+            chunk: The text chunk to process
+            highlight_ratio: Target ratio of content to highlight (0.0 to 1.0)
+
+        Returns:
+            Rendered user prompt
+        """
+        template = self.env.get_template('highlight_user.j2')
+        return template.render(
+            chunk=chunk,
+            highlight_ratio_percent=highlight_ratio * 100,
         )
 
 

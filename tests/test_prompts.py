@@ -17,7 +17,22 @@ def test_gray_out_user_renders_chunk_and_percent():
     assert "42" in user
 
 
+def test_highlight_system_contains_pvhighlight_rule():
+    renderer = get_renderer()
+    system = renderer.render_highlight_system()
+    assert "\\pvhighlight{...}" in system
+
+
+def test_highlight_user_renders_chunk_and_percent():
+    renderer = get_renderer()
+    user = renderer.render_highlight_user(chunk="XYZ", highlight_ratio=0.33)
+    assert "XYZ" in user
+    # Template uses highlight_ratio_percent=highlight_ratio*100; for 0.33 expect 33.0
+    assert "33" in user
+
+
 def test_rewrite_abstract_user_includes_abstract():
     renderer = get_renderer()
     user = renderer.render_rewrite_abstract_user(original_abstract="ABC")
     assert "ABC" in user
+

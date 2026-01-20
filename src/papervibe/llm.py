@@ -1,4 +1,4 @@
-"""LLM interface for abstract rewriting and sentence graying."""
+"""LLM interface for abstract rewriting and content highlighting."""
 
 import asyncio
 import json
@@ -132,10 +132,10 @@ class RewrittenAbstract(BaseModel):
     reasoning: Optional[str] = Field(default=None, description="Brief explanation of changes made")
 
 
-class GrayedChunk(BaseModel):
-    """Structured output for grayed chunk."""
-    
-    content: str = Field(description="The chunk with \\pvgray{} wrappers applied to less important sentences")
+class HighlightedChunk(BaseModel):
+    """Structured output for highlighted chunk."""
+
+    content: str = Field(description="The chunk with \\pvhighlight{} wrappers applied to important keywords and sentences")
 
 
 class LLMClient:
@@ -162,8 +162,8 @@ class LLMClient:
         self.stats = {
             "abstract_timeouts": 0,
             "abstract_errors": 0,
-            "gray_timeouts": 0,
-            "gray_errors": 0,
+            "highlight_timeouts": 0,
+            "highlight_errors": 0,
         }
         
         if not dry_run:
@@ -229,20 +229,20 @@ class LLMClient:
                 # Re-raise to fail fast
                 raise
     
-    async def gray_out_chunk(
+    async def highlight_chunk(
         self,
         chunk: str,
-        gray_ratio: float = 0.4,
+        highlight_ratio: float = 0.4,
     ) -> str:
         """
-        Gray out less important sentences in a text chunk.
+        Highlight important keywords and sentences in a text chunk.
 
         Args:
             chunk: Text chunk to process
-            gray_ratio: Target ratio of text to gray out (0.0 to 1.0)
+            highlight_ratio: Target ratio of content to highlight (0.0 to 1.0)
 
         Returns:
-            Chunk with \\pvgray{} wrappers around less important sentences
+            Chunk with \\pvhighlight{} wrappers around important content
 
         Raises:
             Exception: If LLM call fails (including token limit errors, auth errors, etc.)
@@ -251,8 +251,8 @@ class LLMClient:
             return chunk
 
         async with self.semaphore:
-            system_prompt = self.prompt_renderer.render_gray_out_system()
-            user_prompt = self.prompt_renderer.render_gray_out_user(chunk, gray_ratio)
+            system_prompt = self.prompt_renderer.render_highlight_system()
+            user_prompt = self.prompt_renderer.render_highlight_user(chunk, highlight_ratio)
 
             async def _make_request():
                 """Inner function for retry logic."""
@@ -273,7 +273,7 @@ class LLMClient:
                 response = await retry_with_backoff(
                     _make_request,
                     max_retries=3,
-                    context="gray out chunk"
+                    context="highlight chunk"
                 )
 
                 result = response.choices[0].message.content
@@ -282,7 +282,7 @@ class LLMClient:
                 return result
             except asyncio.TimeoutError:
                 # Timeout is graceful - return original chunk
-                self.stats["gray_timeouts"] += 1
+                self.stats["highlight_timeouts"] += 1
                 return chunk
             except Exception as e:
                 # Check for token limit errors (these are non-retryable)
@@ -290,32 +290,32 @@ class LLMClient:
                 if any(keyword in error_str for keyword in ['token', 'length', 'context_length', 'too long']):
                     raise Exception(f"Token limit exceeded: chunk is too large ({len(chunk)} chars)")
                 # Print full error and re-raise
-                self.stats["gray_errors"] += 1
-                print_error(e, context=f"Failed to gray out chunk ({len(chunk)} chars)")
+                self.stats["highlight_errors"] += 1
+                print_error(e, context=f"Failed to highlight chunk ({len(chunk)} chars)")
                 raise
     
-    async def gray_out_chunks_parallel(
+    async def highlight_chunks_parallel(
         self,
         chunks: List[str],
-        gray_ratio: float = 0.4,
+        highlight_ratio: float = 0.4,
     ) -> List[str]:
         """
-        Gray out multiple chunks in parallel with concurrency control.
+        Highlight multiple chunks in parallel with concurrency control.
 
         Args:
             chunks: List of text chunks to process
-            gray_ratio: Target ratio of text to gray out
+            highlight_ratio: Target ratio of content to highlight
 
         Returns:
-            List of processed chunks with graying applied (or original on error)
+            List of processed chunks with highlighting applied (or original on error)
         """
         async def process_chunk_safe(chunk: str, index: int) -> str:
             """Process a single chunk with error handling."""
             try:
-                return await self.gray_out_chunk(chunk, gray_ratio)
+                return await self.highlight_chunk(chunk, highlight_ratio)
             except Exception as e:
                 # Print full error details
-                self.stats["gray_errors"] += 1
+                self.stats["highlight_errors"] += 1
                 print_error(e, context=f"Chunk {index + 1}/{len(chunks)} failed")
                 # Return original chunk on error (will be caught by validation later)
                 return chunk

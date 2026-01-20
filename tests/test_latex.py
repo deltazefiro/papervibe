@@ -7,9 +7,9 @@ from papervibe.latex import (
     find_references_cutoff,
     extract_abstract,
     replace_abstract,
-    has_xcolor_and_pvgray,
+    has_xcolor_and_pvhighlight,
     inject_preamble,
-    strip_pvgray_wrappers,
+    strip_pvhighlight_wrappers,
     LatexError,
 )
 
@@ -96,35 +96,44 @@ def test_replace_abstract_no_abstract():
         replace_abstract(content, "New abstract")
 
 
-def test_has_xcolor_and_pvgray():
-    """Test detection of xcolor package and pvgray macro."""
-    # Neither present
+def test_has_xcolor_and_pvhighlight():
+    """Test detection of xcolor package, default gray color, and pvhighlight macro."""
+    # None present
     content1 = "\\documentclass{article}\\begin{document}Hello\\end{document}"
-    assert not has_xcolor_and_pvgray(content1)
-    
+    assert not has_xcolor_and_pvhighlight(content1)
+
     # Only xcolor
     content2 = "\\usepackage{xcolor}\\begin{document}Hello\\end{document}"
-    assert not has_xcolor_and_pvgray(content2)
-    
-    # Both present
-    content3 = "\\usepackage{xcolor}\\newcommand{\\pvgray}[1]{\\textcolor{gray}{#1}}\\begin{document}Hello\\end{document}"
-    assert has_xcolor_and_pvgray(content3)
+    assert not has_xcolor_and_pvhighlight(content2)
+
+    # xcolor and pvhighlight but no default gray
+    content3 = "\\usepackage{xcolor}\\newcommand{\\pvhighlight}[1]{\\textcolor{black}{#1}}\\begin{document}Hello\\end{document}"
+    assert not has_xcolor_and_pvhighlight(content3)
+
+    # All present
+    content4 = "\\usepackage{xcolor}\\AtBeginDocument{\\color{gray}}\\newcommand{\\pvhighlight}[1]{\\textcolor{black}{#1}}\\begin{document}Hello\\end{document}"
+    assert has_xcolor_and_pvhighlight(content4)
 
 
 def test_inject_preamble():
-    """Test injecting xcolor and pvgray macro."""
+    """Test injecting xcolor, default gray color, and pvhighlight macro."""
     content = "\\documentclass{article}\\begin{document}Hello\\end{document}"
-    
+
     modified = inject_preamble(content)
-    
+
     assert "\\usepackage{xcolor}" in modified
-    assert "\\newcommand{\\pvgray}" in modified
+    assert "\\AtBeginDocument{\\color{gray}}" in modified
+    assert "\\newcommand{\\pvhighlight}" in modified
     assert "\\begin{document}" in modified
-    
-    # Check that it's injected before \begin{document}
+
+    # Check that components are injected before \begin{document}
     xcolor_pos = modified.find("\\usepackage{xcolor}")
+    default_gray_pos = modified.find("\\AtBeginDocument{\\color{gray}}")
+    pvhighlight_pos = modified.find("\\newcommand{\\pvhighlight}")
     doc_pos = modified.find("\\begin{document}")
     assert xcolor_pos < doc_pos
+    assert default_gray_pos < doc_pos
+    assert pvhighlight_pos < doc_pos
 
 
 def test_inject_preamble_idempotent():
@@ -146,33 +155,33 @@ def test_inject_preamble_no_document():
         inject_preamble(content)
 
 
-def test_strip_pvgray_wrappers():
-    """Test stripping \\pvgray wrappers from text."""
+def test_strip_pvhighlight_wrappers():
+    """Test stripping \\pvhighlight wrappers from text."""
     # Simple case
-    text1 = "Hello \\pvgray{world} test"
-    assert strip_pvgray_wrappers(text1) == "Hello world test"
-    
+    text1 = "Hello \\pvhighlight{world} test"
+    assert strip_pvhighlight_wrappers(text1) == "Hello world test"
+
     # Multiple wrappers
-    text2 = "\\pvgray{First} and \\pvgray{second} text"
-    assert strip_pvgray_wrappers(text2) == "First and second text"
-    
+    text2 = "\\pvhighlight{First} and \\pvhighlight{second} text"
+    assert strip_pvhighlight_wrappers(text2) == "First and second text"
+
     # Nested braces
-    text3 = "\\pvgray{Text with {nested} braces}"
-    assert strip_pvgray_wrappers(text3) == "Text with {nested} braces"
-    
+    text3 = "\\pvhighlight{Text with {nested} braces}"
+    assert strip_pvhighlight_wrappers(text3) == "Text with {nested} braces"
+
     # No wrappers
     text4 = "Plain text without wrappers"
-    assert strip_pvgray_wrappers(text4) == "Plain text without wrappers"
-    
+    assert strip_pvhighlight_wrappers(text4) == "Plain text without wrappers"
+
     # Empty wrapper
-    text5 = "Before \\pvgray{} after"
-    assert strip_pvgray_wrappers(text5) == "Before  after"
+    text5 = "Before \\pvhighlight{} after"
+    assert strip_pvhighlight_wrappers(text5) == "Before  after"
 
 
-def test_strip_pvgray_validation():
-    """Test that stripping wrappers from grayed text yields original."""
+def test_strip_pvhighlight_validation():
+    """Test that stripping wrappers from highlighted text yields original."""
     original = "This is some text. And another sentence."
-    grayed = "This is some text. \\pvgray{And another sentence.}"
-    
-    stripped = strip_pvgray_wrappers(grayed)
+    highlighted = "This is some text. \\pvhighlight{And another sentence.}"
+
+    stripped = strip_pvhighlight_wrappers(highlighted)
     assert stripped == original

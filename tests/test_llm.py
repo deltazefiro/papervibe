@@ -22,26 +22,26 @@ async def test_rewrite_abstract_dry_run(dry_run_client):
 
 
 @pytest.mark.asyncio
-async def test_gray_out_chunk_dry_run(dry_run_client):
-    """Test chunk graying in dry-run mode."""
+async def test_highlight_chunk_dry_run(dry_run_client):
+    """Test chunk highlighting in dry-run mode."""
     chunk = "This is a test chunk. It has multiple sentences. Some are important."
-    result = await dry_run_client.gray_out_chunk(chunk, gray_ratio=0.4)
-    
+    result = await dry_run_client.highlight_chunk(chunk, highlight_ratio=0.4)
+
     # In dry-run mode, should return original
     assert result == chunk
 
 
 @pytest.mark.asyncio
-async def test_gray_out_chunks_parallel_dry_run(dry_run_client):
-    """Test parallel chunk graying in dry-run mode."""
+async def test_highlight_chunks_parallel_dry_run(dry_run_client):
+    """Test parallel chunk highlighting in dry-run mode."""
     chunks = [
         "First chunk with text.",
         "Second chunk with more text.",
         "Third chunk also has text.",
     ]
-    
-    results = await dry_run_client.gray_out_chunks_parallel(chunks, gray_ratio=0.4)
-    
+
+    results = await dry_run_client.highlight_chunks_parallel(chunks, highlight_ratio=0.4)
+
     # In dry-run mode, should return originals
     assert results == chunks
     assert len(results) == 3
@@ -82,21 +82,21 @@ def test_llm_client_with_custom_timeout():
 
 
 @pytest.mark.asyncio
-async def test_gray_out_chunk_timeout_returns_original():
+async def test_highlight_chunk_timeout_returns_original():
     """Test that timeout returns original chunk in real client with timeout handling."""
     # Test with a client that has built-in timeout handling
     settings = LLMSettings()
     settings.request_timeout_seconds = 0.001  # Very short timeout
-    
+
     # We can't actually test a real timeout without mocking OpenAI client,
     # but we can verify the dry_run path works correctly
     client = LLMClient(settings=settings, dry_run=True, concurrency=2)
-    
+
     original_chunk = "This is a test chunk."
-    result = await client.gray_out_chunk(original_chunk)
-    
+    result = await client.highlight_chunk(original_chunk)
+
     # In dry-run mode, should return original
     assert result == original_chunk
-    
+
     # Verify timeout setting is configured
     assert client.settings.request_timeout_seconds == 0.001

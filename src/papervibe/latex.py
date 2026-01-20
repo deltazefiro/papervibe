@@ -184,99 +184,106 @@ def replace_abstract(content: str, new_abstract: str) -> str:
     return new_content
 
 
-def has_xcolor_and_pvgray(content: str) -> bool:
+def has_xcolor_and_pvhighlight(content: str) -> bool:
     """
-    Check if the LaTeX content already has xcolor package and \\pvgray macro.
-    
+    Check if the LaTeX content already has xcolor package, default gray color, and \\pvhighlight macro.
+
     Args:
         content: LaTeX content
-        
+
     Returns:
-        True if both xcolor and \\pvgray are present
+        True if xcolor, default gray color, and \\pvhighlight are present
     """
     has_xcolor = bool(re.search(r"\\usepackage(?:\[.*?\])?\{xcolor\}", content))
-    has_pvgray = bool(re.search(r"\\newcommand\{?\\pvgray\}?", content))
-    
-    return has_xcolor and has_pvgray
+    has_pvhighlight = bool(re.search(r"\\newcommand\{?\\pvhighlight\}?", content))
+    has_default_gray = bool(re.search(r"\\AtBeginDocument\{\\color\{gray\}\}", content))
+
+    return has_xcolor and has_pvhighlight and has_default_gray
 
 
 def inject_preamble(content: str) -> str:
     """
-    Inject xcolor package and \\pvgray macro into LaTeX preamble if not present.
-    
-    The macro is injected right before \\begin{document}.
-    
+    Inject xcolor package, default gray color, and \\pvhighlight macro into LaTeX preamble if not present.
+
+    The components are injected right before \\begin{document}:
+    - xcolor package for color support
+    - AtBeginDocument hook to set all text gray by default
+    - pvhighlight macro to highlight important content in black
+
     Args:
         content: LaTeX content
-        
+
     Returns:
         Modified LaTeX content with injected preamble
     """
-    if has_xcolor_and_pvgray(content):
+    if has_xcolor_and_pvhighlight(content):
         return content
-    
+
     # Find \begin{document}
     match = re.search(r"\\begin\{document\}", content)
     if not match:
         raise LatexError("Could not find \\begin{document} in LaTeX content")
-    
+
     inject_pos = match.start()
-    
+
     # Build injection string
     parts = []
-    
+
     if not re.search(r"\\usepackage(?:\[.*?\])?\{xcolor\}", content):
         parts.append("\\usepackage{xcolor}")
-    
-    if not re.search(r"\\newcommand\{?\\pvgray\}?", content):
-        parts.append("\\newcommand{\\pvgray}[1]{\\textcolor{gray}{#1}}")
-    
+
+    if not re.search(r"\\AtBeginDocument\{\\color\{gray\}\}", content):
+        parts.append("\\AtBeginDocument{\\color{gray}}")
+
+    if not re.search(r"\\newcommand\{?\\pvhighlight\}?", content):
+        parts.append("\\newcommand{\\pvhighlight}[1]{\\textcolor{black}{#1}}")
+
     if not parts:
         return content
-    
+
     injection = "\n".join(parts) + "\n\n"
-    
+
     return content[:inject_pos] + injection + content[inject_pos:]
 
 
-def strip_pvgray_wrappers(text: str) -> str:
+def strip_pvhighlight_wrappers(text: str) -> str:
     """
-    Strip all \\pvgray{...} wrappers from text, preserving content.
-    
+    Strip all \\pvhighlight{...} wrappers from text, preserving content.
+
     This is brace-aware and handles nested braces properly.
-    
+
     Args:
-        text: LaTeX text potentially containing \\pvgray{...} wrappers
-        
+        text: LaTeX text potentially containing \\pvhighlight{...} wrappers
+
     Returns:
-        Text with all \\pvgray wrappers removed
+        Text with all \\pvhighlight wrappers removed
     """
     result = []
     i = 0
-    
+
     while i < len(text):
-        # Look for \pvgray{
-        if text[i:i+8] == "\\pvgray{":
-            # Skip the \pvgray{ part
-            i += 8
-            
+        # Look for \pvhighlight{
+        if text[i:i+13] == "\\pvhighlight{":
+            # Skip the \pvhighlight{ part
+            i += 13
+
             # Extract the content within braces
             brace_level = 1
             content_start = i
-            
+
             while i < len(text) and brace_level > 0:
                 if text[i] == "{" and (i == 0 or text[i-1] != "\\"):
                     brace_level += 1
                 elif text[i] == "}" and (i == 0 or text[i-1] != "\\"):
                     brace_level -= 1
                 i += 1
-            
+
             # Add the content (without the closing brace)
             result.append(text[content_start:i-1])
         else:
             result.append(text[i])
             i += 1
-    
+
     return "".join(result)
 
 

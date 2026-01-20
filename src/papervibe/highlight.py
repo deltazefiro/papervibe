@@ -1,44 +1,44 @@
-"""Gray-out pipeline for LaTeX content."""
+"""Highlighting pipeline for LaTeX content."""
 
 import re
 import sys
 from typing import List, Tuple, Optional, Callable
-from papervibe.latex import strip_pvgray_wrappers
+from papervibe.latex import strip_pvhighlight_wrappers
 from papervibe.llm import LLMClient, is_retryable_error, print_error
 
 
-class GrayPipelineError(Exception):
-    """Exception raised for gray pipeline errors."""
+class HighlightPipelineError(Exception):
+    """Exception raised for highlight pipeline errors."""
     pass
 
 
 def chunk_content(content: str, max_chunk_size: int = 1500) -> List[str]:
     """
     Split content into chunks for parallel processing.
-    
+
     Chunks are split at blank lines and section boundaries to maintain context.
     If a paragraph is too large, it's further split into smaller pieces.
-    
+
     Args:
         content: LaTeX content to chunk
         max_chunk_size: Approximate maximum characters per chunk
-        
+
     Returns:
         List of content chunks
     """
     # Hard safety limit - no chunk should ever exceed this (3x max_chunk_size)
     HARD_LIMIT = max_chunk_size * 3
-    
+
     # Split by blank lines (paragraph boundaries)
     paragraphs = re.split(r'\n\s*\n', content)
-    
+
     chunks = []
     current_chunk = []
     current_size = 0
-    
+
     for para in paragraphs:
         para_size = len(para)
-        
+
         # If single paragraph exceeds max size, split it further
         if para_size > max_chunk_size:
             # Add current chunk if not empty
@@ -46,11 +46,11 @@ def chunk_content(content: str, max_chunk_size: int = 1500) -> List[str]:
                 chunks.append('\n\n'.join(current_chunk))
                 current_chunk = []
                 current_size = 0
-            
+
             # Split large paragraph by sentences or at fixed intervals
             # Try splitting by sentences first (look for '. ' or '.\n')
             sentences = re.split(r'(\.\s+|\.\n)', para)
-            
+
             # Rejoin sentence content with delimiters
             rejoined_sentences = []
             for i in range(0, len(sentences) - 1, 2):
@@ -60,13 +60,13 @@ def chunk_content(content: str, max_chunk_size: int = 1500) -> List[str]:
                     rejoined_sentences.append(sentences[i])
             if len(sentences) % 2 == 1:
                 rejoined_sentences.append(sentences[-1])
-            
+
             # Now chunk the sentences
             sub_chunk = []
             sub_size = 0
             for sent in rejoined_sentences:
                 sent_size = len(sent)
-                
+
                 # If a single sentence is still too large, split at fixed intervals
                 # Use HARD_LIMIT to ensure we never exceed safe size
                 if sent_size > HARD_LIMIT:
@@ -74,12 +74,12 @@ def chunk_content(content: str, max_chunk_size: int = 1500) -> List[str]:
                         chunks.append(''.join(sub_chunk))
                         sub_chunk = []
                         sub_size = 0
-                    
+
                     # Split at HARD_LIMIT intervals as last resort
                     for i in range(0, len(sent), HARD_LIMIT):
                         chunks.append(sent[i:i + HARD_LIMIT])
                     continue
-                
+
                 if sub_size + sent_size > max_chunk_size and sub_chunk:
                     chunks.append(''.join(sub_chunk))
                     sub_chunk = [sent]
@@ -87,11 +87,11 @@ def chunk_content(content: str, max_chunk_size: int = 1500) -> List[str]:
                 else:
                     sub_chunk.append(sent)
                     sub_size += sent_size
-            
+
             if sub_chunk:
                 chunks.append(''.join(sub_chunk))
             continue
-        
+
         # If adding this paragraph would exceed max size, start new chunk
         if current_size + para_size > max_chunk_size and current_chunk:
             chunks.append('\n\n'.join(current_chunk))
@@ -100,11 +100,11 @@ def chunk_content(content: str, max_chunk_size: int = 1500) -> List[str]:
         else:
             current_chunk.append(para)
             current_size += para_size + 2  # +2 for \n\n
-    
+
     # Add remaining chunk
     if current_chunk:
         chunks.append('\n\n'.join(current_chunk))
-    
+
     # Safety check: ensure no chunk exceeds HARD_LIMIT
     final_chunks = []
     for chunk in chunks:
@@ -114,78 +114,79 @@ def chunk_content(content: str, max_chunk_size: int = 1500) -> List[str]:
                 final_chunks.append(chunk[i:i + HARD_LIMIT])
         else:
             final_chunks.append(chunk)
-    
+
     return [c for c in final_chunks if c.strip()]
 
 
-def validate_grayed_chunk(original: str, grayed: str) -> bool:
+def validate_highlighted_chunk(original: str, highlighted: str) -> bool:
     """
-    Validate that a grayed chunk matches the original after stripping wrappers.
-    
+    Validate that a highlighted chunk matches the original after stripping wrappers.
+
     Args:
         original: Original chunk text
-        grayed: Grayed chunk with \\pvgray{} wrappers
-        
+        highlighted: Highlighted chunk with \\pvhighlight{} wrappers
+
     Returns:
         True if validation passes, False otherwise
     """
-    stripped = strip_pvgray_wrappers(grayed)
-    
-    # Only normalize line endings (CRLF -> LF), no other whitespace changes
-    original_normalized = original.replace('\r\n', '\n')
-    stripped_normalized = stripped.replace('\r\n', '\n')
-    
+    stripped = strip_pvhighlight_wrappers(highlighted)
+
+    # Normalize line endings (CRLF -> LF) and trailing whitespace
+    # Trailing whitespace doesn't affect LaTeX output and LLMs often strip it
+    original_normalized = original.replace('\r\n', '\n').rstrip()
+    stripped_normalized = stripped.replace('\r\n', '\n').rstrip()
+
     return original_normalized == stripped_normalized
 
 
-async def gray_out_content(
+async def highlight_content(
     content: str,
     llm_client: LLMClient,
-    gray_ratio: float = 0.4,
+    highlight_ratio: float = 0.4,
     max_retries: int = 2,
 ) -> str:
     """
-    Gray out less important sentences in LaTeX content.
-    
+    Highlight important keywords and sentences in LaTeX content.
+
     Args:
         content: LaTeX content to process (pre-references only)
         llm_client: LLM client for processing
-        gray_ratio: Target ratio of sentences to gray out
+        highlight_ratio: Target ratio of content to highlight
         max_retries: Number of retries per chunk if validation fails
-        
+
     Returns:
-        Content with \\pvgray{} wrappers applied
-        
+        Content with \\pvhighlight{} wrappers applied
+
     Raises:
-        GrayPipelineError: If processing fails
+        HighlightPipelineError: If processing fails
     """
     # Split into chunks
     chunks = chunk_content(content)
-    
+
     if not chunks:
         return content
-    
+
     # Process chunks
     processed_chunks = []
-    
+
     for i, chunk in enumerate(chunks):
         success = False
-        grayed_chunk = chunk
-        
+        highlighted_chunk = chunk
+
         for attempt in range(max_retries + 1):
             try:
-                # Try to gray out the chunk
+                # Try to highlight the chunk
                 if attempt == 0:
-                    grayed_chunk = await llm_client.gray_out_chunk(chunk, gray_ratio)
+                    highlighted_chunk = await llm_client.highlight_chunk(chunk, highlight_ratio)
                 else:
                     # On retry, add a note to be more careful
-                    grayed_chunk = await llm_client.gray_out_chunk(
+                    highlighted_chunk = await llm_client.highlight_chunk(
                         chunk,
-                        gray_ratio,
+                        highlight_ratio,
                     )
-                
+
                 # Validate
-                if validate_grayed_chunk(chunk, grayed_chunk):
+                if validate_highlighted_chunk(chunk, highlighted_chunk):
                     success = True
                     break
                 else:
@@ -194,10 +195,10 @@ async def gray_out_content(
                         continue
                     else:
                         # Final retry failed, use original
-                        grayed_chunk = chunk
+                        highlighted_chunk = chunk
                         success = True
                         break
-                        
+
             except Exception as e:
                 # Check if retryable
                 if is_retryable_error(e) and attempt < max_retries:
@@ -206,12 +207,12 @@ async def gray_out_content(
 
                 # Non-retryable error or max retries exceeded
                 print_error(e, context=f"Chunk {i+1}/{len(chunks)} failed after {attempt + 1} attempt(s)")
-                grayed_chunk = chunk
+                highlighted_chunk = chunk
                 success = True
                 break
-        
-        processed_chunks.append(grayed_chunk)
-    
+
+        processed_chunks.append(highlighted_chunk)
+
     # Recombine chunks
     return '\n\n'.join(processed_chunks)
 
@@ -219,11 +220,11 @@ async def gray_out_content(
 def count_chunks(content: str, max_chunk_chars: int = 1500) -> int:
     """
     Count the number of chunks that will be created from content.
-    
+
     Args:
         content: LaTeX content to count chunks for
         max_chunk_chars: Maximum characters per chunk
-        
+
     Returns:
         Number of chunks that will be created
     """
@@ -231,56 +232,56 @@ def count_chunks(content: str, max_chunk_chars: int = 1500) -> int:
     return len(chunks)
 
 
-async def gray_out_content_parallel(
+async def highlight_content_parallel(
     content: str,
     llm_client: LLMClient,
-    gray_ratio: float = 0.4,
+    highlight_ratio: float = 0.4,
     max_retries: int = 2,
     max_chunk_chars: int = 1500,
     progress_callback: Optional[Callable[[int], None]] = None,
 ) -> str:
     """
-    Gray out content with parallel chunk processing.
-    
+    Highlight content with parallel chunk processing.
+
     This version processes all chunks in parallel (up to concurrency limit)
     and validates each one individually.
-    
+
     Args:
         content: LaTeX content to process
         llm_client: LLM client for processing
-        gray_ratio: Target ratio of sentences to gray out
+        highlight_ratio: Target ratio of content to highlight
         max_retries: Number of retries per chunk if validation fails
         max_chunk_chars: Maximum characters per chunk
         progress_callback: Optional callback to call after each chunk is processed
-        
+
     Returns:
-        Content with \\pvgray{} wrappers applied
+        Content with \\pvhighlight{} wrappers applied
     """
     # Split into chunks
     chunks = chunk_content(content, max_chunk_size=max_chunk_chars)
-    
+
     if not chunks:
         return content
-    
+
     # Process all chunks in parallel (first attempt)
     try:
-        grayed_chunks = await llm_client.gray_out_chunks_parallel(chunks, gray_ratio)
+        highlighted_chunks = await llm_client.highlight_chunks_parallel(chunks, highlight_ratio)
     except Exception as e:
         # If parallel processing fails entirely, print error and fall back
-        print_error(e, context="Parallel gray processing failed entirely")
+        print_error(e, context="Parallel highlight processing failed entirely")
         return content
-    
+
     # Validate and retry if needed
     final_chunks = []
-    for i, (original, grayed) in enumerate(zip(chunks, grayed_chunks)):
+    for i, (original, highlighted) in enumerate(zip(chunks, highlighted_chunks)):
         try:
-            if validate_grayed_chunk(original, grayed):
-                final_chunks.append(grayed)
+            if validate_highlighted_chunk(original, highlighted):
+                final_chunks.append(highlighted)
             else:
                 # Retry once
                 try:
-                    retry_result = await llm_client.gray_out_chunk(original, gray_ratio)
-                    if validate_grayed_chunk(original, retry_result):
+                    retry_result = await llm_client.highlight_chunk(original, highlight_ratio)
+                    if validate_highlighted_chunk(original, retry_result):
                         final_chunks.append(retry_result)
                     else:
                         # Use original if validation still fails
@@ -294,9 +295,9 @@ async def gray_out_content_parallel(
             # Validation or other error, print full error
             print_error(e, context=f"Chunk {i+1}/{len(chunks)} processing failed, using original")
             final_chunks.append(original)
-        
+
         # Call progress callback after each chunk is processed
         if progress_callback:
             progress_callback(1)
-    
+
     return '\n\n'.join(final_chunks)

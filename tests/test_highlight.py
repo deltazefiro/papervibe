@@ -1,12 +1,12 @@
-"""Tests for gray-out pipeline."""
+"""Tests for highlighting pipeline."""
 
 import asyncio
 import time
 import pytest
-from papervibe.gray import (
+from papervibe.highlight import (
     chunk_content,
-    validate_grayed_chunk,
-    gray_out_content_parallel,
+    validate_highlighted_chunk,
+    highlight_content_parallel,
     count_chunks,
 )
 from papervibe.llm import LLMClient
@@ -21,9 +21,9 @@ Second paragraph here.
 Third paragraph here.
 
 Fourth paragraph here."""
-    
+
     chunks = chunk_content(content, max_chunk_size=50)
-    
+
     assert len(chunks) > 0
     # Should split at blank lines
     assert all('paragraph' in chunk.lower() for chunk in chunks)
@@ -34,9 +34,9 @@ def test_chunk_content_large_paragraph():
     large_para = "A" * 5000
     small_para = "B" * 100
     content = f"{large_para}\n\n{small_para}"
-    
+
     chunks = chunk_content(content, max_chunk_size=1000)
-    
+
     # Large paragraph should be split into multiple chunks
     assert len(chunks) >= 2
     # Each chunk should be within the hard limit (3x max_chunk_size)
@@ -49,9 +49,9 @@ def test_chunk_content_very_large_paragraph_with_sentences():
     # Create a large paragraph with sentences
     sentence = "This is a test sentence with some content. "
     large_para = sentence * 100  # ~4000 chars
-    
+
     chunks = chunk_content(large_para, max_chunk_size=1000)
-    
+
     # Should be split into multiple chunks
     assert len(chunks) >= 3
     # Each chunk should contain complete sentences
@@ -64,88 +64,88 @@ def test_chunk_content_empty():
     """Test chunking empty content."""
     chunks = chunk_content("")
     assert chunks == []
-    
+
     chunks = chunk_content("   \n\n  ")
     assert chunks == []
 
 
-def test_validate_grayed_chunk_valid():
-    """Test validation of correctly grayed chunk."""
+def test_validate_highlighted_chunk_valid():
+    """Test validation of correctly highlighted chunk."""
     original = "This is a sentence. This is another sentence."
-    grayed = "This is a sentence. \\pvgray{This is another sentence.}"
-    
-    assert validate_grayed_chunk(original, grayed) is True
+    highlighted = "This is a sentence. \\pvhighlight{This is another sentence.}"
+
+    assert validate_highlighted_chunk(original, highlighted) is True
 
 
-def test_validate_grayed_chunk_invalid():
-    """Test validation of incorrectly grayed chunk."""
+def test_validate_highlighted_chunk_invalid():
+    """Test validation of incorrectly highlighted chunk."""
     original = "This is a sentence. This is another sentence."
-    grayed = "This is a sentence. \\pvgray{This is a different sentence.}"
-    
-    assert validate_grayed_chunk(original, grayed) is False
+    highlighted = "This is a sentence. \\pvhighlight{This is a different sentence.}"
+
+    assert validate_highlighted_chunk(original, highlighted) is False
 
 
-def test_validate_grayed_chunk_no_changes():
-    """Test validation when no graying is applied."""
+def test_validate_highlighted_chunk_no_changes():
+    """Test validation when no highlighting is applied."""
     original = "This is a sentence. This is another sentence."
-    grayed = original
-    
-    assert validate_grayed_chunk(original, grayed) is True
+    highlighted = original
+
+    assert validate_highlighted_chunk(original, highlighted) is True
 
 
-def test_validate_grayed_chunk_line_ending_normalization():
+def test_validate_highlighted_chunk_line_ending_normalization():
     """Test that validation handles line-ending differences only."""
     original = "This is a sentence.\r\nThis is another sentence."
-    grayed = "This is a sentence.\n\\pvgray{This is another sentence.}"
-    
+    highlighted = "This is a sentence.\n\\pvhighlight{This is another sentence.}"
+
     # Should be valid due to line-ending normalization only
-    assert validate_grayed_chunk(original, grayed) is True
+    assert validate_highlighted_chunk(original, highlighted) is True
 
 
-def test_validate_grayed_chunk_nested_braces():
+def test_validate_highlighted_chunk_nested_braces():
     """Test validation with nested braces in content."""
     original = "Text with {nested} braces here."
-    grayed = "\\pvgray{Text with {nested} braces here.}"
-    
-    assert validate_grayed_chunk(original, grayed) is True
+    highlighted = "\\pvhighlight{Text with {nested} braces here.}"
+
+    assert validate_highlighted_chunk(original, highlighted) is True
 
 
 @pytest.mark.asyncio
-async def test_gray_out_content_parallel_dry_run():
-    """Test parallel gray-out in dry-run mode."""
+async def test_highlight_content_parallel_dry_run():
+    """Test parallel highlighting in dry-run mode."""
     content = """First paragraph here.
 
 Second paragraph here.
 
 Third paragraph here."""
-    
+
     client = LLMClient(dry_run=True, concurrency=2)
-    result = await gray_out_content_parallel(content, client, gray_ratio=0.4)
-    
+    result = await highlight_content_parallel(content, client, highlight_ratio=0.4)
+
     # In dry-run mode, should return original content
     assert result == content
 
 
 @pytest.mark.asyncio
-async def test_gray_out_content_parallel_empty():
-    """Test parallel gray-out with empty content."""
+async def test_highlight_content_parallel_empty():
+    """Test parallel highlighting with empty content."""
     client = LLMClient(dry_run=True, concurrency=2)
-    result = await gray_out_content_parallel("", client, gray_ratio=0.4)
-    
+    result = await highlight_content_parallel("", client, highlight_ratio=0.4)
+
     assert result == ""
 
 
-def test_validate_grayed_chunk_strict_whitespace():
+def test_validate_highlighted_chunk_strict_whitespace():
     """Test that validation is strict about whitespace (not collapsing)."""
     original = "Line one.\n\nLine two."
     # This has collapsed whitespace, should fail strict validation
-    grayed_wrong = "Line one. \\pvgray{Line two.}"
-    
-    assert validate_grayed_chunk(original, grayed_wrong) is False
-    
+    highlighted_wrong = "Line one. \\pvhighlight{Line two.}"
+
+    assert validate_highlighted_chunk(original, highlighted_wrong) is False
+
     # This preserves the double newline, should pass
-    grayed_correct = "Line one.\n\n\\pvgray{Line two.}"
-    assert validate_grayed_chunk(original, grayed_correct) is True
+    highlighted_correct = "Line one.\n\n\\pvhighlight{Line two.}"
+    assert validate_highlighted_chunk(original, highlighted_correct) is True
 
 
 @pytest.mark.asyncio
@@ -156,25 +156,25 @@ async def test_parallel_processing_performance():
         def __init__(self, sleep_time=0.05):
             super().__init__(dry_run=True, concurrency=4)
             self.sleep_time = sleep_time
-        
-        async def gray_out_chunks_parallel(self, chunks, gray_ratio=0.4):
+
+        async def highlight_chunks_parallel(self, chunks, highlight_ratio=0.4):
             """Simulate slow processing."""
             async def process_one(chunk):
                 await asyncio.sleep(self.sleep_time)
                 return chunk
-            
+
             # Process in parallel
             return await asyncio.gather(*[process_one(c) for c in chunks])
-    
+
     # Create content that will split into multiple chunks
     content = "\n\n".join([f"Paragraph {i} with some content." for i in range(8)])
-    
+
     client = SlowLLMClient(sleep_time=0.05)
-    
+
     start = time.time()
-    result = await gray_out_content_parallel(content, client, gray_ratio=0.4, max_chunk_chars=50)
+    result = await highlight_content_parallel(content, client, highlight_ratio=0.4, max_chunk_chars=50)
     elapsed = time.time() - start
-    
+
     # Should complete in less than sequential time (8 chunks * 0.05s = 0.4s)
     # With parallelism (concurrency=4), should take ~0.1s (2 batches)
     assert elapsed < 0.3  # Allow some margin
@@ -187,12 +187,12 @@ async def test_max_chunk_chars_parameter():
     # Create content with paragraphs
     paragraphs = [f"Paragraph {i} with content." for i in range(5)]
     content = "\n\n".join(paragraphs)
-    
+
     client = LLMClient(dry_run=True, concurrency=2)
-    
+
     # With max_chunk_chars=50, should create multiple chunks
-    result = await gray_out_content_parallel(content, client, gray_ratio=0.4, max_chunk_chars=50)
-    
+    result = await highlight_content_parallel(content, client, highlight_ratio=0.4, max_chunk_chars=50)
+
     # In dry run, should return content (possibly with some whitespace normalization from chunking)
     # Just verify it processes without error and returns something reasonable
     assert len(result) > 0
@@ -208,11 +208,11 @@ Second paragraph here.
 Third paragraph here.
 
 Fourth paragraph here."""
-    
+
     # Count chunks with small max size
     count = count_chunks(content, max_chunk_chars=50)
     assert count > 0
-    
+
     # Should match actual chunks created
     chunks = chunk_content(content, max_chunk_size=50)
     assert count == len(chunks)
@@ -222,7 +222,7 @@ def test_count_chunks_empty():
     """Test counting chunks with empty content."""
     count = count_chunks("", max_chunk_chars=1500)
     assert count == 0
-    
+
     count = count_chunks("   \n\n  ", max_chunk_chars=1500)
     assert count == 0
 
@@ -237,24 +237,24 @@ Second paragraph here.
 Third paragraph here.
 
 Fourth paragraph here."""
-    
+
     client = LLMClient(dry_run=True, concurrency=2)
-    
+
     # Track progress calls
     progress_calls = []
-    
+
     def track_progress(advance: int):
         progress_calls.append(advance)
-    
+
     # Process with callback
-    await gray_out_content_parallel(
+    await highlight_content_parallel(
         content,
         client,
-        gray_ratio=0.4,
+        highlight_ratio=0.4,
         max_chunk_chars=50,
         progress_callback=track_progress,
     )
-    
+
     # Should have been called once per chunk
     expected_chunks = count_chunks(content, max_chunk_chars=50)
     assert len(progress_calls) == expected_chunks
@@ -267,18 +267,17 @@ async def test_progress_callback_none():
     content = """First paragraph here.
 
 Second paragraph here."""
-    
+
     client = LLMClient(dry_run=True, concurrency=2)
-    
+
     # Process without callback (should not crash)
-    result = await gray_out_content_parallel(
+    result = await highlight_content_parallel(
         content,
         client,
-        gray_ratio=0.4,
+        highlight_ratio=0.4,
         max_chunk_chars=50,
         progress_callback=None,
     )
-    
+
     # In dry run, should return original
     assert result == content
-

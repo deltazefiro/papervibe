@@ -20,7 +20,7 @@ from papervibe.latex import (
     LatexError,
 )
 from papervibe.llm import LLMClient
-from papervibe.gray import gray_out_content_parallel, count_chunks
+from papervibe.highlight import highlight_content_parallel, count_chunks
 from papervibe.compile import compile_latex, check_latexmk_available, CompileError
 
 app = typer.Typer(help="PaperVibe: Enhance arXiv papers with AI-powered abstract rewrites and smart highlighting")
@@ -47,9 +47,9 @@ def _process_arxiv_command(
     url: str,
     out: Optional[Path],
     skip_abstract: bool,
-    skip_gray: bool,
+    skip_highlight: bool,
     skip_compile: bool,
-    gray_ratio: float,
+    highlight_ratio: float,
     concurrency: int,
     dry_run: bool,
     llm_timeout: float,
@@ -61,9 +61,9 @@ def _process_arxiv_command(
             url=url,
             out=out,
             skip_abstract=skip_abstract,
-            skip_gray=skip_gray,
+            skip_highlight=skip_highlight,
             skip_compile=skip_compile,
-            gray_ratio=gray_ratio,
+            highlight_ratio=highlight_ratio,
             concurrency=concurrency,
             dry_run=dry_run,
             llm_timeout=llm_timeout,
@@ -78,20 +78,20 @@ def _process_arxiv_command(
 
 
 # Primary command: papervibe arxiv <url>
-@app.command("arxiv", help="Process an arXiv paper: download, enhance abstract, gray out less important sentences, and compile PDF.")
+@app.command("arxiv", help="Process arXiv paper: download, rewrite abstract, highlight important content, compile PDF")
 def cmd_arxiv(
     url: str = typer.Argument(..., help="arXiv URL or ID (e.g., 2107.03374 or https://arxiv.org/abs/2107.03374)"),
     out: Optional[Path] = typer.Option(None, help="Output directory"),
     skip_abstract: bool = typer.Option(False, help="Skip abstract rewriting"),
-    skip_gray: bool = typer.Option(False, help="Skip sentence graying"),
+    skip_highlight: bool = typer.Option(False, help="Skip content highlighting"),
     skip_compile: bool = typer.Option(False, help="Skip PDF compilation"),
-    gray_ratio: float = typer.Option(0.4, help="Target ratio of sentences to gray out"),
+    highlight_ratio: float = typer.Option(0.4, help="Target ratio of content to highlight"),
     concurrency: int = typer.Option(8, help="Number of concurrent LLM requests"),
     dry_run: bool = typer.Option(False, help="Dry run mode (skip LLM calls)"),
     llm_timeout: float = typer.Option(30.0, help="Timeout per LLM request in seconds"),
-    max_chunk_chars: int = typer.Option(1500, help="Max characters per chunk for graying"),
+    max_chunk_chars: int = typer.Option(1500, help="Max characters per chunk for highlighting"),
 ):
-    _process_arxiv_command(url, out, skip_abstract, skip_gray, skip_compile, gray_ratio, concurrency, dry_run, llm_timeout, max_chunk_chars)
+    _process_arxiv_command(url, out, skip_abstract, skip_highlight, skip_compile, highlight_ratio, concurrency, dry_run, llm_timeout, max_chunk_chars)
 
 
 # Compat alias: papervibe <url> (default command for backward compatibility)
@@ -100,24 +100,24 @@ def main(
     url: str = typer.Argument(..., help="arXiv URL or ID (e.g., 2107.03374 or https://arxiv.org/abs/2107.03374)"),
     out: Optional[Path] = typer.Option(None, help="Output directory"),
     skip_abstract: bool = typer.Option(False, help="Skip abstract rewriting"),
-    skip_gray: bool = typer.Option(False, help="Skip sentence graying"),
+    skip_highlight: bool = typer.Option(False, help="Skip content highlighting"),
     skip_compile: bool = typer.Option(False, help="Skip PDF compilation"),
-    gray_ratio: float = typer.Option(0.4, help="Target ratio of sentences to gray out"),
+    highlight_ratio: float = typer.Option(0.4, help="Target ratio of content to highlight"),
     concurrency: int = typer.Option(8, help="Number of concurrent LLM requests"),
     dry_run: bool = typer.Option(False, help="Dry run mode (skip LLM calls)"),
     llm_timeout: float = typer.Option(30.0, help="Timeout per LLM request in seconds"),
-    max_chunk_chars: int = typer.Option(1500, help="Max characters per chunk for graying"),
+    max_chunk_chars: int = typer.Option(1500, help="Max characters per chunk for highlighting"),
 ):
-    _process_arxiv_command(url, out, skip_abstract, skip_gray, skip_compile, gray_ratio, concurrency, dry_run, llm_timeout, max_chunk_chars)
+    _process_arxiv_command(url, out, skip_abstract, skip_highlight, skip_compile, highlight_ratio, concurrency, dry_run, llm_timeout, max_chunk_chars)
 
 
 async def _process_arxiv_paper(
     url: str,
     out: Optional[Path],
     skip_abstract: bool,
-    skip_gray: bool,
+    skip_highlight: bool,
     skip_compile: bool,
-    gray_ratio: float,
+    highlight_ratio: float,
     concurrency: int,
     dry_run: bool,
     llm_timeout: float,
@@ -209,13 +209,13 @@ async def _process_arxiv_paper(
             if abstract_file_path is None and not abstract_found_in_main:
                 typer.echo(f"   Warning: No abstract found in main or included files, skipping rewrite")
     
-    # Step 8: Inject preamble (xcolor + \pvgray macro)
+    # Step 8: Inject preamble (xcolor + default gray + \pvhighlight macro)
     typer.echo(f"Injecting preamble...")
     modified_content = inject_preamble(modified_content)
-    
-    # Step 9: Gray out sentences
-    if not skip_gray:
-        typer.echo(f"Graying out less important sentences (ratio={gray_ratio})...")
+
+    # Step 9: Highlight important content
+    if not skip_highlight:
+        typer.echo(f"Highlighting important content (ratio={highlight_ratio})...")
         
         # Find all input files referenced by main.tex
         input_files = find_input_files(modified_content, source_dir)
@@ -279,7 +279,7 @@ async def _process_arxiv_paper(
                 total_chunks += count_chunks(part, max_chunk_chars=max_chunk_chars)
         
         typer.echo(f"   Processing {total_chunks} chunks across {len(files_to_process)} input files + main file...")
-        
+
         # Create progress bar
         with Progress(
             SpinnerColumn(),
@@ -288,7 +288,7 @@ async def _process_arxiv_paper(
             TaskProgressColumn(),
             transient=False,
         ) as progress:
-            task = progress.add_task("Graying chunks", total=total_chunks)
+            task = progress.add_task("Highlighting chunks", total=total_chunks)
             
             def update_progress(advance: int = 1):
                 """Callback to update progress bar."""
@@ -298,88 +298,88 @@ async def _process_arxiv_paper(
             async def process_input_file(file_path, content):
                 """Process a single input file."""
                 try:
-                    grayed = await gray_out_content_parallel(
+                    highlighted = await highlight_content_parallel(
                         content,
                         llm_client,
-                        gray_ratio=gray_ratio,
+                        highlight_ratio=highlight_ratio,
                         max_chunk_chars=max_chunk_chars,
                         progress_callback=update_progress,
                     )
-                    return (file_path, grayed, len(content))
+                    return (file_path, highlighted, len(content))
                 except Exception as e:
                     typer.echo(f"   Warning: Failed to process {file_path.name}: {e}")
                     return (file_path, content, 0)  # Return original on error
-            
+
             # Process all files in parallel
             if files_to_process:
                 results = await asyncio.gather(*[
                     process_input_file(fp, content) for fp, content in files_to_process
                 ])
-                
+
                 total_chars_processed = 0
-                for file_path, grayed_content, chars_processed in results:
-                    modified_input_files[file_path] = grayed_content
+                for file_path, highlighted_content, chars_processed in results:
+                    modified_input_files[file_path] = highlighted_content
                     total_chars_processed += chars_processed
             else:
                 total_chars_processed = 0
-            
-            # Gray out main file content
-            grayed_main_parts = []
+
+            # Highlight main file content
+            highlighted_main_parts = []
             main_chars_processed = 0
             for part in main_parts_to_gray:
                 if part.strip():
-                    grayed_part = await gray_out_content_parallel(
+                    highlighted_part = await highlight_content_parallel(
                         part,
                         llm_client,
-                        gray_ratio=gray_ratio,
+                        highlight_ratio=highlight_ratio,
                         max_chunk_chars=max_chunk_chars,
                         progress_callback=update_progress,
                     )
-                    grayed_main_parts.append(grayed_part)
+                    highlighted_main_parts.append(highlighted_part)
                     main_chars_processed += len(part)
                 else:
-                    grayed_main_parts.append(part)
+                    highlighted_main_parts.append(part)
         
         # Reconstruct modified_content
         post_refs = modified_content[cutoff:] if cutoff is not None else ""
-        
+
         if abstract_span is not None:
             abs_start, abs_end = abstract_span
             if abs_end <= len(main_content_to_process):
                 abstract_region = modified_content[abs_start:abs_end]
-                if len(grayed_main_parts) == 2:
-                    modified_content = grayed_main_parts[0] + abstract_region + grayed_main_parts[1] + post_refs
+                if len(highlighted_main_parts) == 2:
+                    modified_content = highlighted_main_parts[0] + abstract_region + highlighted_main_parts[1] + post_refs
                 else:
-                    modified_content = grayed_main_parts[0] + post_refs
+                    modified_content = highlighted_main_parts[0] + post_refs
             else:
-                if len(grayed_main_parts) > 0:
-                    modified_content = grayed_main_parts[0] + post_refs
+                if len(highlighted_main_parts) > 0:
+                    modified_content = highlighted_main_parts[0] + post_refs
         else:
-            if len(grayed_main_parts) > 0:
-                modified_content = grayed_main_parts[0] + post_refs
+            if len(highlighted_main_parts) > 0:
+                modified_content = highlighted_main_parts[0] + post_refs
         
         if modified_input_files:
             typer.echo(f"   Processed {len(modified_input_files)} input files ({total_chars_processed} chars) + main file ({main_chars_processed} chars)")
         elif main_chars_processed > 0:
             typer.echo(f"   Processed main file ({main_chars_processed} chars)")
-        
+
         # Step 9.1: Diagnostic summary
-        wrapper_count = modified_content.count(r"\pvgray{")
+        wrapper_count = modified_content.count(r"\pvhighlight{")
         for content in modified_input_files.values():
-            wrapper_count += content.count(r"\pvgray{")
-        
+            wrapper_count += content.count(r"\pvhighlight{")
+
         if dry_run:
-            typer.echo(f"   [Dry Run] No \\pvgray{{}} wrappers actually added.")
-        elif not skip_gray and gray_ratio > 0:
+            typer.echo(f"   [Dry Run] No \\pvhighlight{{}} wrappers actually added.")
+        elif not skip_highlight and highlight_ratio > 0:
             if wrapper_count == 0:
-                typer.echo(f"   Warning: No graying was applied! (wrapper count: 0)")
+                typer.echo(f"   Warning: No highlighting was applied! (wrapper count: 0)")
                 if any(llm_client.stats.values()):
                     typer.echo(f"   LLM Stats: {llm_client.stats}")
                     typer.echo(f"   Hint: Some requests timed out or failed. Try increasing --llm-timeout or check LLM config.")
                 else:
-                    typer.echo(f"   Hint: The LLM might have decided not to gray out any sentences, or all edits failed validation.")
+                    typer.echo(f"   Hint: The LLM might have decided not to highlight any content, or all edits failed validation.")
             else:
-                typer.echo(f"   Applied {wrapper_count} \\pvgray{{}} wrappers.")
+                typer.echo(f"   Applied {wrapper_count} \\pvhighlight{{}} wrappers.")
 
     # Step 10: Write modified files
     typer.echo(f"Writing modified files...")
@@ -397,12 +397,12 @@ async def _process_arxiv_paper(
     modified_main.write_text(modified_content, encoding="utf-8")
     
     # Overwrite modified input files
-    if not skip_gray:
-        for input_file, grayed_content in modified_input_files.items():
+    if not skip_highlight:
+        for input_file, highlighted_content in modified_input_files.items():
             # Compute relative path and write to modified directory
             rel_path = input_file.relative_to(source_dir)
             output_file = modified_dir / rel_path
-            output_file.write_text(grayed_content, encoding="utf-8")
+            output_file.write_text(highlighted_content, encoding="utf-8")
     
     typer.echo(f"   Modified files in: {modified_dir}")
     
