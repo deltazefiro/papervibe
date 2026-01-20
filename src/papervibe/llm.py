@@ -7,13 +7,16 @@ from typing import Optional, List, Callable, TypeVar, Any, Type
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from openai import AsyncOpenAI, RateLimitError, APIConnectionError, APITimeoutError
-from tenacity import AsyncRetrying, retry_if_exception, stop_after_attempt, wait_exponential
+from tenacity import (
+    AsyncRetrying,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 logger = logging.getLogger(__name__)
 
-T = TypeVar('T', bound=BaseModel)
-
-_DEBUG_DELIM = "-" * 60
+T = TypeVar("T", bound=BaseModel)
 
 
 def _log_llm_debug(
@@ -24,14 +27,13 @@ def _log_llm_debug(
 ) -> None:
     if not logger.isEnabledFor(logging.DEBUG):
         return
-    lines = [_DEBUG_DELIM, title]
+    lines = [title]
     for key, value in metadata.items():
         lines.append(f"{key}: {value}")
     lines.append("input:")
     lines.append(input_text)
     lines.append("output:")
     lines.append(output_text)
-    lines.append(_DEBUG_DELIM)
     logger.debug("\n".join(lines))
 
 
@@ -59,7 +61,7 @@ def is_retryable_error(error: Exception) -> bool:
 
     # Check error message for rate limit indicators
     error_str = str(error).lower()
-    if 'rate_limit' in error_str or 'rate limit' in error_str or '429' in error_str:
+    if "rate_limit" in error_str or "rate limit" in error_str or "429" in error_str:
         return True
 
     return False
@@ -78,7 +80,7 @@ def print_error(error: Exception, context: str = "") -> None:
 
     # Extract status code if available
     status_code = ""
-    if hasattr(error, 'status_code'):
+    if hasattr(error, "status_code"):
         status_code = f" (status: {error.status_code})"
 
     if context:
@@ -90,7 +92,7 @@ async def retry_with_backoff(
     func: Callable[[], Any],
     max_retries: int = 3,
     initial_delay: float = 2.0,
-    context: str = ""
+    context: str = "",
 ) -> Any:
     """
     Retry function with exponential backoff for retryable errors only.
@@ -107,6 +109,7 @@ async def retry_with_backoff(
     Raises:
         Exception: Re-raises the exception if non-retryable or max retries exceeded
     """
+
     def _should_retry(error: Exception) -> bool:
         if isinstance(error, asyncio.TimeoutError):
             return False
@@ -139,7 +142,9 @@ async def retry_with_backoff(
 class LLMSettings(BaseSettings):
     """Settings for LLM API access."""
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+    )
 
     openai_api_key: str
     openai_base_url: Optional[str] = None
@@ -223,6 +228,7 @@ class LLMClient:
         model = self._get_model(model_type)
 
         async with self.semaphore:
+
             async def _make_request():
                 """Inner function for retry logic."""
                 kwargs = {
@@ -242,9 +248,7 @@ class LLMClient:
                 )
 
             response = await retry_with_backoff(
-                _make_request,
-                max_retries=3,
-                context=f"{model_type} completion"
+                _make_request, max_retries=3, context=f"{model_type} completion"
             )
 
             result = response.choices[0].message.content
@@ -309,6 +313,7 @@ class LLMClient:
         model = self._get_model(model_type)
 
         async with self.semaphore:
+
             async def _make_request():
                 """Inner function for retry logic."""
                 return await asyncio.wait_for(
@@ -327,7 +332,7 @@ class LLMClient:
             response = await retry_with_backoff(
                 _make_request,
                 max_retries=3,
-                context=f"{model_type} structured completion"
+                context=f"{model_type} structured completion",
             )
 
             result = response.choices[0].message.parsed
@@ -359,7 +364,9 @@ class LLMClient:
         elif model_type == "light":
             return self.settings.light_model
         else:
-            raise ValueError(f"Invalid model type: {model_type}. Must be 'strong' or 'light'.")
+            raise ValueError(
+                f"Invalid model type: {model_type}. Must be 'strong' or 'light'."
+            )
 
     # Legacy methods for backward compatibility with tests
     async def rewrite_abstract(self, original_abstract: str) -> str:
@@ -368,6 +375,7 @@ class LLMClient:
         Delegates to process.rewrite_abstract.
         """
         from .process import rewrite_abstract
+
         return await rewrite_abstract(self, original_abstract)
 
     async def highlight_chunk(
@@ -380,6 +388,7 @@ class LLMClient:
         Delegates to process.highlight_chunk.
         """
         from .process import highlight_chunk
+
         return await highlight_chunk(self, chunk, highlight_ratio)
 
     async def highlight_chunks_parallel(
@@ -392,4 +401,5 @@ class LLMClient:
         Delegates to process.highlight_chunks_parallel.
         """
         from .process import highlight_chunks_parallel
+
         return await highlight_chunks_parallel(self, chunks, highlight_ratio)
