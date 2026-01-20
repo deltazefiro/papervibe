@@ -52,6 +52,7 @@ def _process_arxiv_command(
     dry_run: bool,
     llm_timeout: float,
     max_chunk_chars: int,
+    validate_chunks: bool,
 ):
     """Shared implementation for arXiv processing."""
     try:
@@ -66,6 +67,7 @@ def _process_arxiv_command(
             dry_run=dry_run,
             llm_timeout=llm_timeout,
             max_chunk_chars=max_chunk_chars,
+            validate_chunks=validate_chunks,
         ))
     except (ArxivError, LatexError, CompileError) as e:
         logger.error("Error: %s", e)
@@ -88,8 +90,9 @@ def cmd_arxiv(
     dry_run: bool = typer.Option(False, help="Dry run mode (skip LLM calls)"),
     llm_timeout: float = typer.Option(30.0, help="Timeout per LLM request in seconds"),
     max_chunk_chars: int = typer.Option(1500, help="Max characters per chunk for highlighting"),
+    validate_chunks: bool = typer.Option(False, help="Validate highlighted chunks match originals"),
 ):
-    _process_arxiv_command(url, out, skip_abstract, skip_highlight, skip_compile, highlight_ratio, concurrency, dry_run, llm_timeout, max_chunk_chars)
+    _process_arxiv_command(url, out, skip_abstract, skip_highlight, skip_compile, highlight_ratio, concurrency, dry_run, llm_timeout, max_chunk_chars, validate_chunks)
 
 
 # Compat alias: papervibe <url> (default command for backward compatibility)
@@ -105,8 +108,9 @@ def main(
     dry_run: bool = typer.Option(False, help="Dry run mode (skip LLM calls)"),
     llm_timeout: float = typer.Option(30.0, help="Timeout per LLM request in seconds"),
     max_chunk_chars: int = typer.Option(1500, help="Max characters per chunk for highlighting"),
+    validate_chunks: bool = typer.Option(False, help="Validate highlighted chunks match originals"),
 ):
-    _process_arxiv_command(url, out, skip_abstract, skip_highlight, skip_compile, highlight_ratio, concurrency, dry_run, llm_timeout, max_chunk_chars)
+    _process_arxiv_command(url, out, skip_abstract, skip_highlight, skip_compile, highlight_ratio, concurrency, dry_run, llm_timeout, max_chunk_chars, validate_chunks)
 
 
 def main_entry():

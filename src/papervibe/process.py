@@ -186,6 +186,7 @@ async def highlight_content_parallel(
     max_retries: int = 2,
     max_chunk_chars: int = 1500,
     progress_callback: Optional[Callable[[int], None]] = None,
+    validate: bool = False,
 ) -> str:
     """
     Highlight content with parallel chunk processing and validation.
@@ -197,6 +198,7 @@ async def highlight_content_parallel(
         max_retries: Number of retries per chunk if validation fails
         max_chunk_chars: Maximum characters per chunk
         progress_callback: Optional callback to call after each chunk is processed
+        validate: Whether to validate highlighted chunks match originals
 
     Returns:
         Content with \\pvhighlight{} wrappers applied
@@ -221,24 +223,27 @@ async def highlight_content_parallel(
     final_chunks = []
     for i, (original, highlighted) in enumerate(zip(chunks, highlighted_chunks)):
         try:
-            if validate_highlighted_chunk(original, highlighted):
-                final_chunks.append(highlighted)
-            else:
-                # Retry once
-                try:
-                    retry_result = await highlight_chunk(llm_client, original, highlight_ratio)
-                    if validate_highlighted_chunk(original, retry_result):
-                        final_chunks.append(retry_result)
-                    else:
-                        logger.warning(
-                            "Chunk %s/%s validation failed after retry, using original",
-                            i + 1,
-                            len(chunks),
-                        )
+            if validate:
+                if validate_highlighted_chunk(original, highlighted):
+                    final_chunks.append(highlighted)
+                else:
+                    # Retry once
+                    try:
+                        retry_result = await highlight_chunk(llm_client, original, highlight_ratio)
+                        if validate_highlighted_chunk(original, retry_result):
+                            final_chunks.append(retry_result)
+                        else:
+                            logger.warning(
+                                "Chunk %s/%s validation failed after retry, using original",
+                                i + 1,
+                                len(chunks),
+                            )
+                            final_chunks.append(original)
+                    except Exception as e:
+                        print_error(e, context=f"Chunk {i+1}/{len(chunks)} retry failed, using original")
                         final_chunks.append(original)
-                except Exception as e:
-                    print_error(e, context=f"Chunk {i+1}/{len(chunks)} retry failed, using original")
-                    final_chunks.append(original)
+            else:
+                final_chunks.append(highlighted)
         except Exception as e:
             print_error(e, context=f"Chunk {i+1}/{len(chunks)} processing failed, using original")
             final_chunks.append(original)
@@ -261,6 +266,7 @@ async def process_paper(
     dry_run: bool,
     llm_timeout: float,
     max_chunk_chars: int,
+    validate_chunks: bool,
 ):
     """
     Process an arXiv paper: download, rewrite abstract, highlight content, compile PDF.
@@ -276,6 +282,7 @@ async def process_paper(
         dry_run: Dry run mode (skip LLM calls)
         llm_timeout: Timeout per LLM request in seconds
         max_chunk_chars: Max characters per chunk for highlighting
+        validate_chunks: Validate highlighted chunks match originals
     """
     # Step 1: Parse arXiv ID
     logger.info("Parsing arXiv ID from: %s", url)
@@ -456,6 +463,7 @@ async def process_paper(
                         highlight_ratio=highlight_ratio,
                         max_chunk_chars=max_chunk_chars,
                         progress_callback=update_progress,
+                        validate=validate_chunks,
                     )
                     return (file_path, highlighted, len(content))
                 except Exception as e:
@@ -486,6 +494,7 @@ async def process_paper(
                         highlight_ratio=highlight_ratio,
                         max_chunk_chars=max_chunk_chars,
                         progress_callback=update_progress,
+                        validate=validate_chunks,
                     )
                     highlighted_main_parts.append(highlighted_part)
                     main_chars_processed += len(part)
