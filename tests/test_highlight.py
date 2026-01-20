@@ -6,6 +6,8 @@ import pytest
 from papervibe.highlight import (
     chunk_content,
     validate_highlighted_chunk,
+)
+from papervibe.process import (
     highlight_content_parallel,
     count_chunks,
 )

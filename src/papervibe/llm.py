@@ -1,19 +1,17 @@
-"""LLM interface for abstract rewriting and content highlighting."""
+"""Low-level LLM completion interface."""
 
 import asyncio
 import json
 import logging
-from typing import Optional, List, Callable, TypeVar, Any
-from pydantic import BaseModel, Field
+from typing import Optional, List, Callable, TypeVar, Any, Type
+from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from openai import AsyncOpenAI, RateLimitError, APIConnectionError, APITimeoutError
 from tenacity import AsyncRetrying, retry_if_exception, stop_after_attempt, wait_exponential
 
-from .prompts import get_renderer
-
 logger = logging.getLogger(__name__)
 
-T = TypeVar('T')
+T = TypeVar('T', bound=BaseModel)
 
 _DEBUG_DELIM = "-" * 60
 
@@ -140,9 +138,9 @@ async def retry_with_backoff(
 
 class LLMSettings(BaseSettings):
     """Settings for LLM API access."""
-    
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
-    
+
     openai_api_key: str
     openai_base_url: Optional[str] = None
     strong_model: str = "gemini-3-pro-preview"
@@ -150,22 +148,9 @@ class LLMSettings(BaseSettings):
     request_timeout_seconds: float = 30.0
 
 
-class RewrittenAbstract(BaseModel):
-    """Structured output for abstract rewriting."""
-    
-    abstract: str = Field(description="The rewritten abstract text")
-    reasoning: Optional[str] = Field(default=None, description="Brief explanation of changes made")
-
-
-class HighlightedChunk(BaseModel):
-    """Structured output for highlighted chunk."""
-
-    content: str = Field(description="The chunk with \\pvhighlight{} wrappers applied to important keywords and sentences")
-
-
 class LLMClient:
     """Async client for LLM operations with concurrency control."""
-    
+
     def __init__(
         self,
         settings: Optional[LLMSettings] = None,
@@ -174,7 +159,7 @@ class LLMClient:
     ):
         """
         Initialize LLM client.
-        
+
         Args:
             settings: LLM settings (loads from .env if None)
             concurrency: Maximum concurrent requests
@@ -183,14 +168,13 @@ class LLMClient:
         self.settings = settings or LLMSettings()
         self.dry_run = dry_run
         self.semaphore = asyncio.Semaphore(concurrency)
-        self.prompt_renderer = get_renderer()
         self.stats = {
             "abstract_timeouts": 0,
             "abstract_errors": 0,
             "highlight_timeouts": 0,
             "highlight_errors": 0,
         }
-        
+
         if not dry_run:
             self.client = AsyncOpenAI(
                 api_key=self.settings.openai_api_key,
@@ -198,211 +182,214 @@ class LLMClient:
             )
         else:
             self.client = None
-    
-    async def rewrite_abstract(self, original_abstract: str) -> str:
+
+    async def complete(
+        self,
+        model_type: str,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+    ) -> str:
         """
-        Rewrite an abstract to be more clear and engaging.
+        Simple completion interface.
 
         Args:
-            original_abstract: Original abstract text
+            model_type: "strong" or "light"
+            system_prompt: System prompt
+            user_prompt: User prompt
+            temperature: Temperature for sampling
+            max_tokens: Maximum tokens to generate
 
         Returns:
-            Rewritten abstract text
+            Completion text
 
         Raises:
-            Exception: On non-retryable errors (auth, invalid request, etc.)
+            asyncio.TimeoutError: If request times out
+            Exception: On other errors
         """
         if self.dry_run:
             _log_llm_debug(
-                "LLM rewrite_abstract (dry run)",
+                f"LLM complete ({model_type}, dry run)",
                 {
-                    "model": self.settings.strong_model,
+                    "model": self._get_model(model_type),
                     "timeout": f"{self.settings.request_timeout_seconds}s",
                 },
-                original_abstract,
-                original_abstract,
+                user_prompt,
+                user_prompt,
             )
-            return original_abstract
+            return user_prompt
+
+        model = self._get_model(model_type)
 
         async with self.semaphore:
-            system_prompt = self.prompt_renderer.render_rewrite_abstract_system()
-            user_prompt = self.prompt_renderer.render_rewrite_abstract_user(original_abstract)
+            async def _make_request():
+                """Inner function for retry logic."""
+                kwargs = {
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    "temperature": temperature,
+                }
+                if max_tokens is not None:
+                    kwargs["max_completion_tokens"] = max_tokens
 
+                return await asyncio.wait_for(
+                    self.client.chat.completions.create(**kwargs),
+                    timeout=self.settings.request_timeout_seconds,
+                )
+
+            response = await retry_with_backoff(
+                _make_request,
+                max_retries=3,
+                context=f"{model_type} completion"
+            )
+
+            result = response.choices[0].message.content
+            output_text = result if result is not None else ""
+
+            _log_llm_debug(
+                f"LLM complete ({model_type})",
+                {
+                    "model": model,
+                    "timeout": f"{self.settings.request_timeout_seconds}s",
+                },
+                user_prompt,
+                output_text,
+            )
+
+            return output_text
+
+    async def complete_structured(
+        self,
+        model_type: str,
+        system_prompt: str,
+        user_prompt: str,
+        response_model: Type[T],
+        temperature: float = 0.7,
+    ) -> T:
+        """
+        Structured completion interface with Pydantic model parsing.
+
+        Args:
+            model_type: "strong" or "light"
+            system_prompt: System prompt
+            user_prompt: User prompt
+            response_model: Pydantic model for response parsing
+            temperature: Temperature for sampling
+
+        Returns:
+            Parsed response as response_model instance
+
+        Raises:
+            asyncio.TimeoutError: If request times out
+            Exception: On other errors
+        """
+        if self.dry_run:
+            # In dry run, return a dummy instance with user_prompt as the first string field
+            dummy_data = {}
+            for field_name, field_info in response_model.model_fields.items():
+                if field_info.annotation == str:
+                    dummy_data[field_name] = user_prompt
+                    break
+            result = response_model(**dummy_data)
+            _log_llm_debug(
+                f"LLM complete_structured ({model_type}, dry run)",
+                {
+                    "model": self._get_model(model_type),
+                    "timeout": f"{self.settings.request_timeout_seconds}s",
+                },
+                user_prompt,
+                str(result),
+            )
+            return result
+
+        model = self._get_model(model_type)
+
+        async with self.semaphore:
             async def _make_request():
                 """Inner function for retry logic."""
                 return await asyncio.wait_for(
                     self.client.beta.chat.completions.parse(
-                        model=self.settings.strong_model,
+                        model=model,
                         messages=[
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_prompt},
                         ],
-                        response_format=RewrittenAbstract,
-                        temperature=0.7,
+                        response_format=response_model,
+                        temperature=temperature,
                     ),
                     timeout=self.settings.request_timeout_seconds,
                 )
 
-            try:
-                response = await retry_with_backoff(
-                    _make_request,
-                    max_retries=3,
-                    context="abstract rewrite"
-                )
-                result = response.choices[0].message.parsed
-                _log_llm_debug(
-                    "LLM rewrite_abstract",
-                    {
-                        "model": self.settings.strong_model,
-                        "timeout": f"{self.settings.request_timeout_seconds}s",
-                    },
-                    original_abstract,
-                    result.abstract,
-                )
-                return result.abstract
-            except asyncio.TimeoutError:
-                # Timeout is graceful - use original abstract
-                self.stats["abstract_timeouts"] += 1
-                logger.warning(
-                    "Abstract rewrite timed out after %ss, using original",
-                    self.settings.request_timeout_seconds,
-                )
-                _log_llm_debug(
-                    "LLM rewrite_abstract (timeout fallback)",
-                    {
-                        "model": self.settings.strong_model,
-                        "timeout": f"{self.settings.request_timeout_seconds}s",
-                    },
-                    original_abstract,
-                    original_abstract,
-                )
-                return original_abstract
-            except Exception as e:
-                # Print full error and fail fast
-                self.stats["abstract_errors"] += 1
-                print_error(e, context="Failed to rewrite abstract")
-                # Re-raise to fail fast
-                raise
-    
+            response = await retry_with_backoff(
+                _make_request,
+                max_retries=3,
+                context=f"{model_type} structured completion"
+            )
+
+            result = response.choices[0].message.parsed
+
+            _log_llm_debug(
+                f"LLM complete_structured ({model_type})",
+                {
+                    "model": model,
+                    "timeout": f"{self.settings.request_timeout_seconds}s",
+                },
+                user_prompt,
+                str(result),
+            )
+
+            return result
+
+    def _get_model(self, model_type: str) -> str:
+        """
+        Get model name from model type.
+
+        Args:
+            model_type: "strong" or "light"
+
+        Returns:
+            Model name
+        """
+        if model_type == "strong":
+            return self.settings.strong_model
+        elif model_type == "light":
+            return self.settings.light_model
+        else:
+            raise ValueError(f"Invalid model type: {model_type}. Must be 'strong' or 'light'.")
+
+    # Legacy methods for backward compatibility with tests
+    async def rewrite_abstract(self, original_abstract: str) -> str:
+        """
+        Legacy method for backward compatibility.
+        Delegates to process.rewrite_abstract.
+        """
+        from .process import rewrite_abstract
+        return await rewrite_abstract(self, original_abstract)
+
     async def highlight_chunk(
         self,
         chunk: str,
         highlight_ratio: float = 0.4,
     ) -> str:
         """
-        Highlight important keywords and sentences in a text chunk.
-
-        Args:
-            chunk: Text chunk to process
-            highlight_ratio: Target ratio of content to highlight (0.0 to 1.0)
-
-        Returns:
-            Chunk with \\pvhighlight{} wrappers around important content
-
-        Raises:
-            Exception: If LLM call fails (including token limit errors, auth errors, etc.)
+        Legacy method for backward compatibility.
+        Delegates to process.highlight_chunk.
         """
-        if self.dry_run:
-            _log_llm_debug(
-                "LLM highlight_chunk (dry run)",
-                {
-                    "model": self.settings.light_model,
-                    "timeout": f"{self.settings.request_timeout_seconds}s",
-                    "highlight_ratio": str(highlight_ratio),
-                },
-                chunk,
-                chunk,
-            )
-            return chunk
+        from .process import highlight_chunk
+        return await highlight_chunk(self, chunk, highlight_ratio)
 
-        async with self.semaphore:
-            system_prompt = self.prompt_renderer.render_highlight_system()
-            user_prompt = self.prompt_renderer.render_highlight_user(chunk, highlight_ratio)
-
-            async def _make_request():
-                """Inner function for retry logic."""
-                return await asyncio.wait_for(
-                    self.client.chat.completions.create(
-                        model=self.settings.light_model,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_prompt},
-                        ],
-                        temperature=0.3,
-                        max_completion_tokens=16000,  # Use almost the full 16K limit
-                    ),
-                    timeout=self.settings.request_timeout_seconds,
-                )
-
-            try:
-                response = await retry_with_backoff(
-                    _make_request,
-                    max_retries=3,
-                    context="highlight chunk"
-                )
-
-                result = response.choices[0].message.content
-                output_text = result if result is not None else chunk
-                _log_llm_debug(
-                    "LLM highlight_chunk",
-                    {
-                        "model": self.settings.light_model,
-                        "timeout": f"{self.settings.request_timeout_seconds}s",
-                        "highlight_ratio": str(highlight_ratio),
-                    },
-                    chunk,
-                    output_text,
-                )
-                return output_text
-            except asyncio.TimeoutError:
-                # Timeout is graceful - return original chunk
-                self.stats["highlight_timeouts"] += 1
-                _log_llm_debug(
-                    "LLM highlight_chunk (timeout fallback)",
-                    {
-                        "model": self.settings.light_model,
-                        "timeout": f"{self.settings.request_timeout_seconds}s",
-                        "highlight_ratio": str(highlight_ratio),
-                    },
-                    chunk,
-                    chunk,
-                )
-                return chunk
-            except Exception as e:
-                # Check for token limit errors (these are non-retryable)
-                error_str = str(e).lower()
-                if any(keyword in error_str for keyword in ['token', 'length', 'context_length', 'too long']):
-                    raise Exception(f"Token limit exceeded: chunk is too large ({len(chunk)} chars)")
-                # Print full error and re-raise
-                self.stats["highlight_errors"] += 1
-                print_error(e, context=f"Failed to highlight chunk ({len(chunk)} chars)")
-                raise
-    
     async def highlight_chunks_parallel(
         self,
         chunks: List[str],
         highlight_ratio: float = 0.4,
     ) -> List[str]:
         """
-        Highlight multiple chunks in parallel with concurrency control.
-
-        Args:
-            chunks: List of text chunks to process
-            highlight_ratio: Target ratio of content to highlight
-
-        Returns:
-            List of processed chunks with highlighting applied (or original on error)
+        Legacy method for backward compatibility.
+        Delegates to process.highlight_chunks_parallel.
         """
-        async def process_chunk_safe(chunk: str, index: int) -> str:
-            """Process a single chunk with error handling."""
-            try:
-                return await self.highlight_chunk(chunk, highlight_ratio)
-            except Exception as e:
-                # Print full error details
-                self.stats["highlight_errors"] += 1
-                print_error(e, context=f"Chunk {index + 1}/{len(chunks)} failed")
-                # Return original chunk on error (will be caught by validation later)
-                return chunk
-
-        tasks = [process_chunk_safe(chunk, i) for i, chunk in enumerate(chunks)]
-        return await asyncio.gather(*tasks)
+        from .process import highlight_chunks_parallel
+        return await highlight_chunks_parallel(self, chunks, highlight_ratio)
