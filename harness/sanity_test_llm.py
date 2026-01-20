@@ -26,15 +26,18 @@ async def test_llm_connectivity():
         print(f"  Model: {settings.light_model}")
         print(f"  Timeout: {settings.request_timeout_seconds}s")
 
-        # Make a simple request
+        # Make a simple request using the new interface
         print("\n  Sending test request...")
-        result = await llm_client.highlight_chunk(
-            "Hello world. This is a test.", highlight_ratio=0.5
+        result = await llm_client.complete(
+            model_type="light",
+            system_prompt="You are a helpful assistant.",
+            user_prompt="Say 'Hello, LLM connection test successful!' and nothing else.",
+            temperature=0.3,
         )
 
         if result:
             print(f"  ✓ LLM responded successfully")
-            print(f"  Response preview: {result[:100]}")
+            print(f"  Response: {result[:100]}")
             return True
         else:
             print("  ✗ LLM returned empty response")

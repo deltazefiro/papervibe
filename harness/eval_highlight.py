@@ -11,7 +11,7 @@ from typing import List, Tuple
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from papervibe.latex import inject_preamble
-from papervibe.highlight import highlight_content_parallel
+from papervibe.process import highlight_content_parallel
 from papervibe.llm import LLMClient, LLMSettings
 
 
