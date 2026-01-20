@@ -1,10 +1,12 @@
 """Highlighting pipeline for LaTeX content."""
 
+import logging
 import re
-import sys
 from typing import List, Tuple, Optional, Callable
 from papervibe.latex import strip_pvhighlight_wrappers
 from papervibe.llm import LLMClient, is_retryable_error, print_error
+
+logger = logging.getLogger(__name__)
 
 
 class HighlightPipelineError(Exception):
@@ -202,7 +204,13 @@ async def highlight_content(
             except Exception as e:
                 # Check if retryable
                 if is_retryable_error(e) and attempt < max_retries:
-                    print(f"   Retrying chunk {i+1}/{len(chunks)} (attempt {attempt + 2}/{max_retries + 1})...", file=sys.stderr)
+                    logger.warning(
+                        "Retrying chunk %s/%s (attempt %s/%s)...",
+                        i + 1,
+                        len(chunks),
+                        attempt + 2,
+                        max_retries + 1,
+                    )
                     continue
 
                 # Non-retryable error or max retries exceeded
@@ -285,7 +293,11 @@ async def highlight_content_parallel(
                         final_chunks.append(retry_result)
                     else:
                         # Use original if validation still fails
-                        print(f"   Warning: Chunk {i+1}/{len(chunks)} validation failed after retry, using original", file=sys.stderr)
+                        logger.warning(
+                            "Chunk %s/%s validation failed after retry, using original",
+                            i + 1,
+                            len(chunks),
+                        )
                         final_chunks.append(original)
                 except Exception as e:
                     # Print full error on retry failure

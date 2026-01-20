@@ -2,13 +2,15 @@
 
 import asyncio
 import json
-import sys
+import logging
 from typing import Optional, List, Callable, TypeVar, Any
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from openai import AsyncOpenAI, RateLimitError, APIConnectionError, APITimeoutError
 
 from .prompts import get_renderer
+
+logger = logging.getLogger(__name__)
 
 T = TypeVar('T')
 
@@ -59,10 +61,9 @@ def print_error(error: Exception, context: str = "") -> None:
     if hasattr(error, 'status_code'):
         status_code = f" (status: {error.status_code})"
 
-    # Print to stderr
     if context:
-        print(f"   Error: {context}", file=sys.stderr)
-    print(f"   {error_type}{status_code}: {error_msg}", file=sys.stderr)
+        logger.error("Error: %s", context)
+    logger.error("%s%s: %s", error_type, status_code, error_msg)
 
 
 async def retry_with_backoff(
@@ -104,7 +105,12 @@ async def retry_with_backoff(
                 raise
 
             # Otherwise, retry with backoff
-            print(f"   Retryable error (attempt {attempt + 1}/{max_retries + 1}), retrying in {delay}s...", file=sys.stderr)
+            logger.warning(
+                "Retryable error (attempt %s/%s), retrying in %ss...",
+                attempt + 1,
+                max_retries + 1,
+                delay,
+            )
             await asyncio.sleep(delay)
             delay *= 2  # Exponential backoff
 
@@ -220,7 +226,10 @@ class LLMClient:
             except asyncio.TimeoutError:
                 # Timeout is graceful - use original abstract
                 self.stats["abstract_timeouts"] += 1
-                print(f"   Warning: Abstract rewrite timed out after {self.settings.request_timeout_seconds}s, using original")
+                logger.warning(
+                    "Abstract rewrite timed out after %ss, using original",
+                    self.settings.request_timeout_seconds,
+                )
                 return original_abstract
             except Exception as e:
                 # Print full error and fail fast

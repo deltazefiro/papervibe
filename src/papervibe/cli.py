@@ -1,6 +1,7 @@
 """Command-line interface for PaperVibe."""
 
 import asyncio
+import logging
 import shutil
 import sys
 import typer
@@ -20,10 +21,12 @@ from papervibe.latex import (
     LatexError,
 )
 from papervibe.llm import LLMClient
+from papervibe.logging import setup_logging, get_console
 from papervibe.highlight import highlight_content_parallel, count_chunks
 from papervibe.compile import compile_latex, check_latexmk_available, CompileError
 
 app = typer.Typer(help="PaperVibe: Enhance arXiv papers with AI-powered abstract rewrites and smart highlighting")
+logger = logging.getLogger(__name__)
 
 
 def _inject_arxiv_command():
@@ -35,8 +38,15 @@ def _inject_arxiv_command():
 
 
 @app.callback(invoke_without_command=True)
-def default_command(ctx: typer.Context):
+def default_command(
+    ctx: typer.Context,
+    verbose: int = typer.Option(0, "--verbose", "-v", count=True, help="Increase logging verbosity (repeatable)"),
+    quiet: int = typer.Option(0, "--quiet", "-q", count=True, help="Decrease logging verbosity (repeatable)"),
+    log_level: Optional[str] = typer.Option(None, help="Set log level (debug, info, warning, error, critical)"),
+    log_file: Optional[Path] = typer.Option(None, help="Write full logs to a file"),
+):
     """Handle default command routing for backward compatibility."""
+    setup_logging(verbose=verbose, quiet=quiet, log_level=log_level, log_file=log_file)
     if ctx.invoked_subcommand is None:
         # No subcommand specified - default to main command
         # This is handled by the ctx system automatically if we don't intervene
@@ -70,10 +80,10 @@ def _process_arxiv_command(
             max_chunk_chars=max_chunk_chars,
         ))
     except (ArxivError, LatexError, CompileError) as e:
-        typer.echo(f"Error: {e}", err=True)
+        logger.error("Error: %s", e)
         raise typer.Exit(code=1)
     except KeyboardInterrupt:
-        typer.echo("\nInterrupted by user", err=True)
+        logger.warning("Interrupted by user")
         raise typer.Exit(code=130)
 
 
@@ -126,9 +136,9 @@ async def _process_arxiv_paper(
     """Internal async function to process an arXiv paper."""
     
     # Step 1: Parse arXiv ID
-    typer.echo(f"Parsing arXiv ID from: {url}")
+    logger.info("Parsing arXiv ID from: %s", url)
     arxiv_id, version = parse_arxiv_id(url)
-    typer.echo(f"   arXiv ID: {arxiv_id}{version or ''}")
+    logger.info("  arXiv ID: %s%s", arxiv_id, version or "")
     
     # Step 2: Determine output directory
     if out is None:
@@ -137,19 +147,19 @@ async def _process_arxiv_paper(
         out = Path(out)
     
     out.mkdir(parents=True, exist_ok=True)
-    typer.echo(f"   Output directory: {out}")
+    logger.info("  Output directory: %s", out)
     
     # Step 3: Download source
-    typer.echo(f"Downloading arXiv source...")
+    logger.info("Downloading arXiv source...")
     source_dir = out / "original"
     source_dir.mkdir(exist_ok=True)
     download_arxiv_source(arxiv_id, version, source_dir)
-    typer.echo(f"   Downloaded to: {source_dir}")
+    logger.info("  Downloaded to: %s", source_dir)
     
     # Step 4: Find main .tex file
-    typer.echo(f"Finding main .tex file...")
+    logger.info("Finding main .tex file...")
     main_tex = find_main_tex_file(source_dir)
-    typer.echo(f"   Main file: {main_tex.name}")
+    logger.info("  Main file: %s", main_tex.name)
     
     # Step 5: Read original content
     original_content = main_tex.read_text(encoding="utf-8", errors="ignore")
@@ -169,7 +179,7 @@ async def _process_arxiv_paper(
     abstract_found_in_main = False
     
     if not skip_abstract:
-        typer.echo(f"Rewriting abstract...")
+        logger.info("Rewriting abstract...")
         
         # First, try to find abstract in main file
         abstract_result = extract_abstract(modified_content)
@@ -178,10 +188,10 @@ async def _process_arxiv_paper(
             # Abstract found in main file
             abstract_found_in_main = True
             original_abstract, _, _ = abstract_result
-            typer.echo(f"   Found abstract in {main_tex.name}: {len(original_abstract)} chars")
+            logger.info("  Found abstract in %s: %s chars", main_tex.name, len(original_abstract))
             
             new_abstract = await llm_client.rewrite_abstract(original_abstract)
-            typer.echo(f"   New abstract: {len(new_abstract)} chars")
+            logger.info("  New abstract: %s chars", len(new_abstract))
             
             modified_content = replace_abstract(modified_content, new_abstract)
         else:
@@ -194,10 +204,10 @@ async def _process_arxiv_paper(
                     
                     if abstract_result:
                         original_abstract, _, _ = abstract_result
-                        typer.echo(f"   Found abstract in {input_file.name}: {len(original_abstract)} chars")
+                        logger.info("  Found abstract in %s: %s chars", input_file.name, len(original_abstract))
                         
                         new_abstract = await llm_client.rewrite_abstract(original_abstract)
-                        typer.echo(f"   New abstract: {len(new_abstract)} chars")
+                        logger.info("  New abstract: %s chars", len(new_abstract))
                         
                         # Store the file path and modified content for later
                         abstract_file_path = input_file
@@ -207,15 +217,15 @@ async def _process_arxiv_paper(
                     continue
             
             if abstract_file_path is None and not abstract_found_in_main:
-                typer.echo(f"   Warning: No abstract found in main or included files, skipping rewrite")
+                logger.warning("No abstract found in main or included files, skipping rewrite")
     
     # Step 8: Inject preamble (xcolor + default gray + \pvhighlight macro)
-    typer.echo(f"Injecting preamble...")
+    logger.info("Injecting preamble...")
     modified_content = inject_preamble(modified_content)
 
     # Step 9: Highlight important content
     if not skip_highlight:
-        typer.echo(f"Highlighting important content (ratio={highlight_ratio})...")
+        logger.info("Highlighting important content (ratio=%s)...", highlight_ratio)
         
         # Find all input files referenced by main.tex
         input_files = find_input_files(modified_content, source_dir)
@@ -225,7 +235,7 @@ async def _process_arxiv_paper(
         for input_file in input_files:
             # Skip if we already processed this file during abstract rewrite
             if input_file in modified_input_files:
-                typer.echo(f"   Skipping {input_file.name} (already processed during abstract rewrite)")
+                logger.info("  Skipping %s (already processed during abstract rewrite)", input_file.name)
                 continue
                 
             try:
@@ -233,12 +243,12 @@ async def _process_arxiv_paper(
                 
                 # Check if this is the abstract file (skip graying)
                 if extract_abstract(input_content):
-                    typer.echo(f"   Skipping {input_file.name} (contains abstract)")
+                    logger.info("  Skipping %s (contains abstract)", input_file.name)
                     continue
                 
                 files_to_process.append((input_file, input_content))
             except Exception as e:
-                typer.echo(f"   Warning: Failed to read {input_file.name}: {e}")
+                logger.warning("Failed to read %s: %s", input_file.name, e)
         
         # Count total chunks for progress bar
         total_chunks = 0
@@ -278,7 +288,11 @@ async def _process_arxiv_paper(
             if part.strip():
                 total_chunks += count_chunks(part, max_chunk_chars=max_chunk_chars)
         
-        typer.echo(f"   Processing {total_chunks} chunks across {len(files_to_process)} input files + main file...")
+        logger.info(
+            "Processing %s chunks across %s input files + main file...",
+            total_chunks,
+            len(files_to_process),
+        )
 
         # Create progress bar
         with Progress(
@@ -287,6 +301,7 @@ async def _process_arxiv_paper(
             BarColumn(),
             TaskProgressColumn(),
             transient=False,
+            console=get_console(),
         ) as progress:
             task = progress.add_task("Highlighting chunks", total=total_chunks)
             
@@ -307,7 +322,7 @@ async def _process_arxiv_paper(
                     )
                     return (file_path, highlighted, len(content))
                 except Exception as e:
-                    typer.echo(f"   Warning: Failed to process {file_path.name}: {e}")
+                    logger.warning("Failed to process %s: %s", file_path.name, e)
                     return (file_path, content, 0)  # Return original on error
 
             # Process all files in parallel
@@ -359,9 +374,14 @@ async def _process_arxiv_paper(
                 modified_content = highlighted_main_parts[0] + post_refs
         
         if modified_input_files:
-            typer.echo(f"   Processed {len(modified_input_files)} input files ({total_chars_processed} chars) + main file ({main_chars_processed} chars)")
+            logger.info(
+                "Processed %s input files (%s chars) + main file (%s chars)",
+                len(modified_input_files),
+                total_chars_processed,
+                main_chars_processed,
+            )
         elif main_chars_processed > 0:
-            typer.echo(f"   Processed main file ({main_chars_processed} chars)")
+            logger.info("Processed main file (%s chars)", main_chars_processed)
 
         # Step 9.1: Diagnostic summary
         wrapper_count = modified_content.count(r"\pvhighlight{")
@@ -369,20 +389,24 @@ async def _process_arxiv_paper(
             wrapper_count += content.count(r"\pvhighlight{")
 
         if dry_run:
-            typer.echo(f"   [Dry Run] No \\pvhighlight{{}} wrappers actually added.")
+            logger.info("[Dry Run] No \\pvhighlight{} wrappers actually added.")
         elif not skip_highlight and highlight_ratio > 0:
             if wrapper_count == 0:
-                typer.echo(f"   Warning: No highlighting was applied! (wrapper count: 0)")
+                logger.warning("No highlighting was applied (wrapper count: 0)")
                 if any(llm_client.stats.values()):
-                    typer.echo(f"   LLM Stats: {llm_client.stats}")
-                    typer.echo(f"   Hint: Some requests timed out or failed. Try increasing --llm-timeout or check LLM config.")
+                    logger.warning("LLM stats: %s", llm_client.stats)
+                    logger.info(
+                        "Hint: Some requests timed out or failed. Try increasing --llm-timeout or check LLM config."
+                    )
                 else:
-                    typer.echo(f"   Hint: The LLM might have decided not to highlight any content, or all edits failed validation.")
+                    logger.info(
+                        "Hint: The LLM might have decided not to highlight any content, or all edits failed validation."
+                    )
             else:
-                typer.echo(f"   Applied {wrapper_count} \\pvhighlight{{}} wrappers.")
+                logger.info("Applied %s \\pvhighlight{} wrappers.", wrapper_count)
 
     # Step 10: Write modified files
-    typer.echo(f"Writing modified files...")
+    logger.info("Writing modified files...")
     modified_dir = out / "modified"
     
     # Remove existing modified directory if it exists to ensure clean state
@@ -404,32 +428,32 @@ async def _process_arxiv_paper(
             output_file = modified_dir / rel_path
             output_file.write_text(highlighted_content, encoding="utf-8")
     
-    typer.echo(f"   Modified files in: {modified_dir}")
+    logger.info("Modified files in: %s", modified_dir)
     
     # Step 11: Compile PDF
     if not skip_compile:
         if not check_latexmk_available():
-            typer.echo(f"   Warning: latexmk not found, skipping compilation")
+            logger.warning("latexmk not found, skipping compilation")
         else:
-            typer.echo(f"Compiling PDF...")
+            logger.info("Compiling PDF...")
             pdf_path, log = compile_latex(
                 modified_main,
                 output_dir=modified_dir,
                 timeout=300,
             )
-            typer.echo(f"   Success: PDF compiled: {pdf_path}")
+            logger.info("PDF compiled: %s", pdf_path)
             
             # Copy PDF to output root for convenience
             final_pdf = out / f"{arxiv_id.replace('/', '_')}.pdf"
             shutil.copy2(pdf_path, final_pdf)
-            typer.echo(f"   Final PDF: {final_pdf}")
-    
-    typer.echo(f"\nProcessing complete!")
-    typer.echo(f"   Original sources: {source_dir}")
-    typer.echo(f"   Modified sources: {modified_dir}")
+            logger.info("Final PDF: %s", final_pdf)
+
+    logger.info("Processing complete!")
+    logger.info("Original sources: %s", source_dir)
+    logger.info("Modified sources: %s", modified_dir)
     if not skip_compile and check_latexmk_available():
         final_pdf_name = f"{arxiv_id.replace('/', '_')}.pdf"
-        typer.echo(f"   Final PDF: {out / final_pdf_name}")
+        logger.info("Final PDF: %s", out / final_pdf_name)
 
 
 def main_entry():
