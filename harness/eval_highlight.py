@@ -215,7 +215,7 @@ async def main():
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path(__file__).parent / "output",
+        default=Path(__file__).parent / "out",
         help="Output directory for results",
     )
     parser.add_argument(
