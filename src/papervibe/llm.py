@@ -7,6 +7,7 @@ from typing import Optional, List, Callable, TypeVar, Any
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from openai import AsyncOpenAI, RateLimitError, APIConnectionError, APITimeoutError
+from tenacity import AsyncRetrying, retry_if_exception, stop_after_attempt, wait_exponential
 
 from .prompts import get_renderer
 
@@ -98,7 +99,7 @@ async def retry_with_backoff(
 
     Args:
         func: Async function to retry
-        max_retries: Maximum number of retries (default: 3)
+        max_retries: Maximum number of attempts (default: 3)
         initial_delay: Initial delay in seconds (default: 2.0)
         context: Context string for error messages
 
@@ -108,36 +109,33 @@ async def retry_with_backoff(
     Raises:
         Exception: Re-raises the exception if non-retryable or max retries exceeded
     """
-    delay = initial_delay
-    last_error = None
+    def _should_retry(error: Exception) -> bool:
+        if isinstance(error, asyncio.TimeoutError):
+            return False
+        return is_retryable_error(error)
 
-    for attempt in range(max_retries + 1):
-        try:
+    def _log_retry(retry_state: Any) -> None:
+        context_label = f" during {context}" if context else ""
+        sleep_seconds = 0.0
+        if retry_state.next_action is not None:
+            sleep_seconds = retry_state.next_action.sleep
+        logger.warning(
+            "Retryable error%s (attempt %s/%s), retrying in %ss...",
+            context_label,
+            retry_state.attempt_number,
+            max_retries,
+            sleep_seconds,
+        )
+
+    async for attempt in AsyncRetrying(
+        retry=retry_if_exception(_should_retry),
+        stop=stop_after_attempt(max_retries),
+        wait=wait_exponential(multiplier=initial_delay),
+        reraise=True,
+        before_sleep=_log_retry,
+    ):
+        with attempt:
             return await func()
-        except Exception as e:
-            last_error = e
-
-            # If this is not a retryable error, fail immediately
-            if not is_retryable_error(e):
-                raise
-
-            # If we've exhausted retries, raise
-            if attempt >= max_retries:
-                raise
-
-            # Otherwise, retry with backoff
-            logger.warning(
-                "Retryable error (attempt %s/%s), retrying in %ss...",
-                attempt + 1,
-                max_retries + 1,
-                delay,
-            )
-            await asyncio.sleep(delay)
-            delay *= 2  # Exponential backoff
-
-    # This should never be reached, but just in case
-    if last_error:
-        raise last_error
 
 
 class LLMSettings(BaseSettings):
