@@ -110,8 +110,8 @@ def test_has_xcolor_and_pvhighlight():
     content3 = "\\usepackage{xcolor}\\newcommand{\\pvhighlight}[1]{\\textcolor{black}{#1}}\\begin{document}Hello\\end{document}"
     assert not has_xcolor_and_pvhighlight(content3)
 
-    # All present
-    content4 = "\\usepackage{xcolor}\\AtBeginDocument{\\color{gray}}\\newcommand{\\pvhighlight}[1]{\\textcolor{black}{#1}}\\begin{document}Hello\\end{document}"
+    # All present (including abstract black marker)
+    content4 = "\\usepackage{xcolor}\\AtBeginDocument{\\color{gray}}\\newcommand{\\pvhighlight}[1]{\\textcolor{black}{#1}}\\newcommand{\\pvabstractblack}{}\\begin{document}Hello\\end{document}"
     assert has_xcolor_and_pvhighlight(content4)
 
 
@@ -124,16 +124,20 @@ def test_inject_preamble():
     assert "\\usepackage{xcolor}" in modified
     assert "\\AtBeginDocument{\\color{gray}}" in modified
     assert "\\newcommand{\\pvhighlight}" in modified
+    assert "\\renewenvironment{abstract}" in modified  # Abstract stays black
+    assert "\\pvabstractblack" in modified  # Marker for idempotence
     assert "\\begin{document}" in modified
 
     # Check that components are injected before \begin{document}
     xcolor_pos = modified.find("\\usepackage{xcolor}")
     default_gray_pos = modified.find("\\AtBeginDocument{\\color{gray}}")
     pvhighlight_pos = modified.find("\\newcommand{\\pvhighlight}")
+    abstract_pos = modified.find("\\renewenvironment{abstract}")
     doc_pos = modified.find("\\begin{document}")
     assert xcolor_pos < doc_pos
     assert default_gray_pos < doc_pos
     assert pvhighlight_pos < doc_pos
+    assert abstract_pos < doc_pos
 
 
 def test_inject_preamble_idempotent():

@@ -197,8 +197,9 @@ def has_xcolor_and_pvhighlight(content: str) -> bool:
     has_xcolor = bool(re.search(r"\\usepackage(?:\[.*?\])?\{xcolor\}", content))
     has_pvhighlight = bool(re.search(r"\\newcommand\{?\\pvhighlight\}?", content))
     has_default_gray = bool(re.search(r"\\AtBeginDocument\{\\color\{gray\}\}", content))
+    has_abstract_black = bool(re.search(r"\\pvabstractblack", content))
 
-    return has_xcolor and has_pvhighlight and has_default_gray
+    return has_xcolor and has_pvhighlight and has_default_gray and has_abstract_black
 
 
 def inject_preamble(content: str) -> str:
@@ -209,6 +210,7 @@ def inject_preamble(content: str) -> str:
     - xcolor package for color support
     - AtBeginDocument hook to set all text gray by default
     - pvhighlight macro to highlight important content in black
+    - Abstract environment override to keep abstract text black
 
     Args:
         content: LaTeX content
@@ -237,6 +239,14 @@ def inject_preamble(content: str) -> str:
 
     if not re.search(r"\\newcommand\{?\\pvhighlight\}?", content):
         parts.append("\\newcommand{\\pvhighlight}[1]{\\textcolor{black}{#1}}")
+
+    # Keep abstract text black (not gray)
+    if not re.search(r"\\pvabstractblack", content):
+        parts.append("% Keep abstract text black")
+        parts.append("\\let\\pvoldabstract\\abstract")
+        parts.append("\\let\\pvendoldabstract\\endabstract")
+        parts.append("\\renewenvironment{abstract}{\\pvoldabstract\\color{black}}{\\pvendoldabstract}")
+        parts.append("\\newcommand{\\pvabstractblack}{}% marker")
 
     if not parts:
         return content
