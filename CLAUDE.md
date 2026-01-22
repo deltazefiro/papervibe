@@ -53,3 +53,6 @@ By default, results are written under `out/<id>/`:
 - `original/`: downloaded/unpacked sources
 - `modified/`: modified sources used for compilation
 - `<id>.pdf`: compiled PDF (if compilation succeeds)
+
+## Notes
+- LLM timeout should be at least 120 seconds. Long outputs may need even more.
