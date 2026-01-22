@@ -21,7 +21,10 @@ The design goal is to keep LaTeX diffs minimal and mechanical.
   - `highlight.py`: chunking + snippet-based highlighting (parse_snippets, apply_highlights)
   - `compile.py`: `latexmk` compilation wrapper
 - `tests/`: pytest suite + LaTeX fixtures (automated, no LLM calls)
-- `harness/`: scripts for testing specific modules with real LLM calls that require manual evaluation
+- `harness/`: manual LLM evaluation with side-by-side PDF comparison
+  - `samples/`: LaTeX samples (highlight/, abstract/)
+  - `eval_highlight.py`, `eval_abstract.py`: evaluation scripts
+  - `out/`: evaluation outputs
 
 ## Key invariants
 
@@ -47,6 +50,7 @@ The design goal is to keep LaTeX diffs minimal and mechanical.
 - Process a paper (dry run): `uv run papervibe arxiv 2107.03374 --dry-run`
 - Process a paper (real): `uv run papervibe arxiv 2107.03374 --highlight-ratio 0.4 --concurrency 8`
 - Evaluate highlighting on samples: `uv run python harness/eval_highlight.py`
+- Evaluate abstract rewriting: `uv run python harness/eval_abstract.py`
 
 ## Outputs
 
