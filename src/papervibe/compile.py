@@ -57,12 +57,17 @@ def compile_latex(
     # -pdf: use pdflatex
     # -interaction=nonstopmode: don't stop for errors
     # -file-line-error: better error messages
+    # -f: force mode (continue despite errors to complete full compilation cycle)
+    #     This is needed because some arXiv sources have malformed LaTeX (e.g., \cite {key}
+    #     with space) that causes warnings. Without -f, latexmk stops early and bibliography
+    #     references remain undefined [?] in the output PDF.
     # -output-directory: where to put output files
     cmd = [
         "latexmk",
         "-pdf",
         "-interaction=nonstopmode",
         "-file-line-error",
+        "-f",
         f"-output-directory={output_dir.absolute()}",
         str(tex_file.absolute()),
     ]
