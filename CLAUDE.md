@@ -5,7 +5,7 @@
 `papervibe` is a Python (uv-managed) CLI tool that:
 1) Downloads an arXiv paper TeX source bundle
 2) Rewrites the LaTeX abstract using a "strong" OpenAI model
-3) Highlights important keywords and sentences by inserting `\\pvhighlight{...}` wrappers (validated to avoid any other content changes)
+3) Highlights important keywords and sentences by inserting `\\pvhighlight{...}` wrappers
 4) Compiles the modified sources to PDF using `latexmk`
 
 The design goal is to keep LaTeX diffs minimal and mechanical.
@@ -18,7 +18,7 @@ The design goal is to keep LaTeX diffs minimal and mechanical.
   - `arxiv.py`: arXiv ID parsing + source download/unpack
   - `latex.py`: LaTeX helpers (main file detection, references cutoff, abstract span/replace, preamble injection, wrapper stripping)
   - `llm.py`: AsyncOpenAI wrapper + settings (reads `.env`) + concurrency semaphore
-  - `highlight.py`: chunking + strict validation of highlight edits
+  - `highlight.py`: chunking + snippet-based highlighting (parse_snippets, apply_highlights)
   - `compile.py`: `latexmk` compilation wrapper
 - `tests/`: pytest suite + LaTeX fixtures (automated, no LLM calls)
 - `harness/`: scripts for testing specific modules with real LLM calls that require manual evaluation
@@ -27,16 +27,17 @@ The design goal is to keep LaTeX diffs minimal and mechanical.
 
 - Minimal LaTeX edits only:
   - abstract replacement
-  - one-time preamble injection (`xcolor` + `\\AtBeginDocument{\\color{gray}}` + `\\pvhighlight` macro)
+  - one-time preamble injection (`xcolor` + `\\AtBeginDocument{\\color{gray}}` + `\\pvhighlight` macro + abstract black override)
   - `\\pvhighlight{...}` wrappers around important keywords and sentences
 - Color scheme:
   - Default text color: gray (set via `\\AtBeginDocument{\\color{gray}}`)
   - Highlighted content: black (via `\\pvhighlight{...}` wrapper)
-- Highlight-stage validation is strict:
-  - strip all `\\pvhighlight{...}` wrappers (brace-aware)
-  - remaining text must match the original chunk exactly (only CRLF->LF and trailing whitespace normalization allowed)
-  - on failure: retry, then fall back to leaving the chunk unchanged
-- Abstract is excluded from the highlight stage.
+  - Abstract: always black (via `\\renewenvironment{abstract}`)
+- Highlight approach (snippet-based):
+  - LLM outputs only the text snippets to highlight, one per line
+  - Code searches for each snippet in the original chunk and wraps first match with `\\pvhighlight{...}`
+  - Unmatched snippets are logged at debug level and skipped
+- Abstract is excluded from the highlight stage (but always rendered in black).
 - `.env` contains secrets and must never be committed.
 
 ## Common commands
