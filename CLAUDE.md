@@ -45,7 +45,7 @@ The design goal is to keep LaTeX diffs minimal and mechanical.
 - Show CLI help: `uv run papervibe --help`
 - Process a paper (dry run): `uv run papervibe arxiv 2107.03374 --dry-run`
 - Process a paper (real): `uv run papervibe arxiv 2107.03374 --highlight-ratio 0.4 --concurrency 8`
-- Evaluate highlighting on samples: `cd harness && uv run python eval_highlight.py`
+- Evaluate highlighting on samples: `uv run python harness/eval_highlight.py`
 
 ## Outputs
 
