@@ -237,7 +237,7 @@ async def main():
     parser.add_argument(
         "--timeout",
         type=float,
-        default=60.0,
+        default=120.0,
         help="LLM request timeout in seconds (default: 60)",
     )
 
