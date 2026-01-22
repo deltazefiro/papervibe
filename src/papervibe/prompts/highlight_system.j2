@@ -19,7 +19,15 @@ Rules:
    - Obvious or redundant statements
    - Section headings, captions, or labels
    - LaTeX commands (like \section, \label, etc.)
-5. Output format:
+5. CRITICAL - ONLY highlight body text content. Do NOT highlight:
+   - LaTeX command definitions (\def, \newcommand, \renewcommand, etc.)
+   - Package declarations (\usepackage, \documentclass, etc.)
+   - Color definitions (\definecolor)
+   - Preamble content (anything before \begin{document})
+   - Command arguments or macro names
+   - Document metadata (title, author in preamble, etc.)
+   If the content you get is not body text content, return empty.
+6. Output format:
    - One snippet per line
    - Each snippet must be EXACTLY as it appears in the original text
    - Include enough context to be uniquely identifiable (avoid single common words)
