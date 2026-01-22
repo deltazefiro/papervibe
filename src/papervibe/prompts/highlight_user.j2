@@ -1,5 +1,6 @@
-Highlight approximately {{ highlight_ratio_percent }}% of the most important keywords and sentences in this chunk by wrapping them with \pvhighlight{...}:
+Output the most important keywords and sentences from this chunk (approximately {{ highlight_ratio_percent }}% of content).
+Output ONLY the exact text snippets to highlight, one per line. No explanations.
 
+---
 {{ chunk }}
-
-CRITICAL: Return the text EXACTLY as provided, with ONLY \pvhighlight{...} wrappers added around important keywords and sentences. Preserve all whitespace and formatting.
+---

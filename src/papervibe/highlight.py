@@ -2,10 +2,77 @@
 
 import logging
 import re
-from typing import List
+from typing import List, Tuple
 from papervibe.latex import strip_pvhighlight_wrappers
 
 logger = logging.getLogger(__name__)
+
+
+def parse_snippets(llm_output: str) -> List[str]:
+    """
+    Parse LLM output into a list of snippets to highlight.
+
+    Args:
+        llm_output: Raw LLM output with one snippet per line
+
+    Returns:
+        List of non-empty snippet strings
+    """
+    snippets = []
+    for line in llm_output.strip().split('\n'):
+        line = line.strip()
+        # Skip empty lines and lines that look like commentary
+        if line and not line.startswith('#') and not line.startswith('//'):
+            snippets.append(line)
+    return snippets
+
+
+def apply_highlights(original: str, snippets: List[str]) -> Tuple[str, int, int]:
+    """
+    Apply highlights to original text by wrapping snippets with \\pvhighlight{}.
+
+    This function searches for each snippet in the original text and wraps
+    the first match with \\pvhighlight{}. Longer snippets are processed first
+    to avoid issues with overlapping matches.
+
+    Args:
+        original: Original LaTeX content
+        snippets: List of text snippets to highlight
+
+    Returns:
+        Tuple of (highlighted_text, matched_count, unmatched_count)
+    """
+    result = original
+    matched = 0
+    unmatched = 0
+
+    # Sort snippets by length (longest first) to avoid nested highlights
+    sorted_snippets = sorted(snippets, key=len, reverse=True)
+
+    for snippet in sorted_snippets:
+        if not snippet:
+            continue
+
+        # Search for exact match in the current result
+        idx = result.find(snippet)
+        if idx != -1:
+            # Check if already wrapped (avoid double-wrapping)
+            # Look for \pvhighlight{ before this position
+            before = result[:idx]
+            if before.endswith('\\pvhighlight{'):
+                logger.debug("Snippet already wrapped, skipping: %s", snippet[:50])
+                continue
+
+            # Wrap the first occurrence
+            wrapped = f'\\pvhighlight{{{snippet}}}'
+            result = result[:idx] + wrapped + result[idx + len(snippet):]
+            matched += 1
+            logger.debug("Matched snippet: %s", snippet[:50])
+        else:
+            unmatched += 1
+            logger.debug("Unmatched snippet: %s", snippet[:80])
+
+    return result, matched, unmatched
 
 
 class HighlightPipelineError(Exception):

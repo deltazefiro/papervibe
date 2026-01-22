@@ -20,7 +20,9 @@ def test_gray_out_user_renders_chunk_and_percent():
 def test_highlight_system_contains_pvhighlight_rule():
     renderer = get_renderer()
     system = renderer.render_highlight_system()
-    assert "\\pvhighlight{...}" in system
+    # New snippet-based approach: prompt asks for snippets to highlight, one per line
+    assert "one per line" in system.lower()
+    assert "snippet" in system.lower()
 
 
 def test_highlight_user_renders_chunk_and_percent():

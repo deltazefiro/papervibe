@@ -88,6 +88,9 @@ async def highlight_chunk(
     """
     Highlight important keywords and sentences in a text chunk.
 
+    The LLM outputs a list of snippets to highlight (one per line),
+    then we search for each snippet in the original text and wrap it.
+
     Args:
         llm_client: LLM client for processing
         chunk: Text chunk to process
@@ -100,6 +103,7 @@ async def highlight_chunk(
         Exception: If LLM call fails
     """
     from .prompts import get_renderer
+    from .highlight import parse_snippets, apply_highlights
 
     # Handle dry-run mode early
     if llm_client.dry_run:
@@ -110,13 +114,25 @@ async def highlight_chunk(
     user_prompt = renderer.render_highlight_user(chunk, highlight_ratio)
 
     try:
-        result = await llm_client.complete(
+        llm_output = await llm_client.complete(
             model_type="light",
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             temperature=0.3,
-            max_tokens=16000,
+            max_tokens=4000,  # Snippets list is much shorter than full chunk
         )
+
+        # Parse snippets from LLM output
+        snippets = parse_snippets(llm_output)
+
+        # Apply highlights to original chunk
+        result, matched, unmatched = apply_highlights(chunk, snippets)
+
+        logger.debug(
+            "Chunk highlighting: %d snippets, %d matched, %d unmatched",
+            len(snippets), matched, unmatched
+        )
+
         return result
     except asyncio.TimeoutError:
         llm_client.stats["highlight_timeouts"] += 1
@@ -189,21 +205,21 @@ async def highlight_content_parallel(
     validate: bool = False,
 ) -> str:
     """
-    Highlight content with parallel chunk processing and validation.
+    Highlight content with parallel chunk processing.
 
     Args:
         content: LaTeX content to process
         llm_client: LLM client for processing
         highlight_ratio: Target ratio of content to highlight
-        max_retries: Number of retries per chunk if validation fails
+        max_retries: (unused, kept for API compatibility)
         max_chunk_chars: Maximum characters per chunk
         progress_callback: Optional callback to call after each chunk is processed
-        validate: Whether to validate highlighted chunks match originals
+        validate: (unused, kept for API compatibility)
 
     Returns:
         Content with \\pvhighlight{} wrappers applied
     """
-    from .highlight import chunk_content, validate_highlighted_chunk
+    from .highlight import chunk_content
     from .llm import print_error
 
     # Split into chunks
@@ -212,47 +228,19 @@ async def highlight_content_parallel(
     if not chunks:
         return content
 
-    # Process all chunks in parallel (first attempt)
+    # Process all chunks in parallel
     try:
         highlighted_chunks = await highlight_chunks_parallel(llm_client, chunks, highlight_ratio)
     except Exception as e:
         print_error(e, context="Parallel highlight processing failed entirely")
         return content
 
-    # Validate and retry if needed
-    final_chunks = []
-    for i, (original, highlighted) in enumerate(zip(chunks, highlighted_chunks)):
-        try:
-            if validate:
-                if validate_highlighted_chunk(original, highlighted):
-                    final_chunks.append(highlighted)
-                else:
-                    # Retry once
-                    try:
-                        retry_result = await highlight_chunk(llm_client, original, highlight_ratio)
-                        if validate_highlighted_chunk(original, retry_result):
-                            final_chunks.append(retry_result)
-                        else:
-                            logger.warning(
-                                "Chunk %s/%s validation failed after retry, using original",
-                                i + 1,
-                                len(chunks),
-                            )
-                            final_chunks.append(original)
-                    except Exception as e:
-                        print_error(e, context=f"Chunk {i+1}/{len(chunks)} retry failed, using original")
-                        final_chunks.append(original)
-            else:
-                final_chunks.append(highlighted)
-        except Exception as e:
-            print_error(e, context=f"Chunk {i+1}/{len(chunks)} processing failed, using original")
-            final_chunks.append(original)
-
-        # Call progress callback after each chunk is processed
-        if progress_callback:
+    # Call progress callback for each chunk processed
+    if progress_callback:
+        for _ in highlighted_chunks:
             progress_callback(1)
 
-    return '\n\n'.join(final_chunks)
+    return '\n\n'.join(highlighted_chunks)
 
 
 async def process_paper(
