@@ -1,0 +1,34 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{amssymb}
+
+\begin{document}
+
+\section{MovieChat}
+
+\paragraph{Extend positional encoding.} For long-term memory, the number of tokens exceeds the maximum length of the positional encoding from the pre-trained model. Thus, our model utilizes the positional encoding mechanism following BERT, which results in a portion exceeding the length threshold $n$ without available positional encoding. In order to handle long enough long memory, we adopt the hierarchically decomposed positional encoding method proposed by Su et al., which allows to extend the absolute positional encoding of length from $n$ to $n^2$.
+
+\subsection{Inference}
+
+Previous methods always use the representation of the whole video to conduct understanding and question-answering, which may fail in localizing specific moment especially in long videos. To this end, we propose two inference modes, global and breakpoint, for long video understanding task as follows.
+
+
+\paragraph{Global mode.}
+
+Global mode is defined as the understanding and question-answering for the whole video. In this case, we only use long-term memory $\mathcal{L}$ as the video representation $\mathbf{V}$.
+
+\paragraph{Breakpoint mode.}
+
+Breakpoint mode is distinctly defined as understanding specific moments in a video. Since events inherently possess continuity, we need to consider not only the information directly related to the moments stored in short-term memory $\mathcal{S}$ but also the information indirectly related stored in long-term memory $\mathcal{L}$. Based on this, we hypothesize that when querying the movie at a specific moment $t$, the video representation $\mathbf{V}$ should be the aggregation of $\mathcal{L}$, $\mathcal{S}$, and the current video frame feature $\mathbf{x}_{t}$. We find that simply concatenating these items yields excellent performance and leave further exploration of additional aggregation choices for future work.
+
+\vspace{10pt}
+
+Subsequently, the video representation $\mathbf{V}$ goes through a Q-former and a linear projection layer before being fed into the LLM $\mathcal{O}$, which can be formulated as:
+\begin{equation}
+    \mathbf{A} = \mathcal{O}(\mathbf{Q}, \mathcal{P} (\mathbf{V})),
+\end{equation}
+where $\mathcal{P}$ is the projection from visual space to text space. $\mathbf{A}$ represents the answer or instruction, and $\mathbf{Q}$ is employed to denote the question, respectively.
+
+\vspace{15pt}
+
+\end{document}
