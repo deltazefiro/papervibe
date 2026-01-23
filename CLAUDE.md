@@ -23,7 +23,7 @@ The design goal is to keep LaTeX diffs minimal and mechanical.
 - `tests/`: pytest suite + LaTeX fixtures (automated, no LLM calls)
 - `harness/`: manual LLM evaluation with side-by-side PDF comparison
   - `samples/`: LaTeX samples (highlight/, abstract/)
-  - `eval_highlight.py`, `eval_abstract.py`: evaluation scripts
+  - `eval_highlight.py`, `eval_abstract.py`, `eval_layout.py`: evaluation scripts
   - `out/`: evaluation outputs
 
 ## Key invariants
@@ -52,6 +52,7 @@ The design goal is to keep LaTeX diffs minimal and mechanical.
 - Process a paper (real): `uv run papervibe arxiv 2107.03374 --concurrency 8`
 - Evaluate highlighting on samples: `uv run python harness/eval_highlight.py`
 - Evaluate abstract rewriting: `uv run python harness/eval_abstract.py`
+- Evaluate layout preservation: `uv run python harness/eval_layout.py [arxiv_ids...]`
 
 ## Outputs
 
