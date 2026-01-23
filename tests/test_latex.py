@@ -73,15 +73,15 @@ def test_replace_abstract():
     """Test replacing abstract in LaTeX."""
     content = (FIXTURE_DIR / "main.tex").read_text()
     new_abstract = "This is a completely new abstract with different content."
-    
+
     modified = replace_abstract(content, new_abstract)
-    
+
     # Check that new abstract is present
     assert new_abstract in modified
-    
-    # Check that old abstract is not present
-    assert "original abstract" not in modified
-    
+
+    # Check that pvreplaceblock is used (old abstract preserved for sizing)
+    assert "\\pvreplaceblock{" in modified
+
     # Check that document structure is preserved
     assert "\\begin{abstract}" in modified
     assert "\\end{abstract}" in modified
@@ -110,8 +110,8 @@ def test_has_xcolor_and_pvhighlight():
     content3 = "\\usepackage{xcolor}\\newcommand{\\pvhighlight}[1]{\\textcolor{black}{#1}}\\begin{document}Hello\\end{document}"
     assert not has_xcolor_and_pvhighlight(content3)
 
-    # All present (including abstract black marker)
-    content4 = "\\usepackage{xcolor}\\AtBeginDocument{\\color{gray}}\\newcommand{\\pvhighlight}[1]{\\textcolor{black}{#1}}\\newcommand{\\pvabstractblack}{}\\begin{document}Hello\\end{document}"
+    # All present (including abstract black marker and replaceblock)
+    content4 = "\\usepackage{xcolor}\\AtBeginDocument{\\color{gray}}\\newcommand{\\pvhighlight}[1]{\\textcolor{black}{#1}}\\newcommand{\\pvabstractblack}{}\\long\\def\\pvreplaceblock#1#2{}\\begin{document}Hello\\end{document}"
     assert has_xcolor_and_pvhighlight(content4)
 
 
@@ -126,6 +126,7 @@ def test_inject_preamble():
     assert "\\newcommand{\\pvhighlight}" in modified
     assert "\\renewenvironment{abstract}" in modified  # Abstract stays black
     assert "\\pvabstractblack" in modified  # Marker for idempotence
+    assert "\\pvreplaceblock" in modified  # Block replacement macro
     assert "\\begin{document}" in modified
 
     # Check that components are injected before \begin{document}
@@ -133,11 +134,13 @@ def test_inject_preamble():
     default_gray_pos = modified.find("\\AtBeginDocument{\\color{gray}}")
     pvhighlight_pos = modified.find("\\newcommand{\\pvhighlight}")
     abstract_pos = modified.find("\\renewenvironment{abstract}")
+    replaceblock_pos = modified.find("\\pvreplaceblock")
     doc_pos = modified.find("\\begin{document}")
     assert xcolor_pos < doc_pos
     assert default_gray_pos < doc_pos
     assert pvhighlight_pos < doc_pos
     assert abstract_pos < doc_pos
+    assert replaceblock_pos < doc_pos
 
 
 def test_inject_preamble_idempotent():

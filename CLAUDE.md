@@ -29,16 +29,16 @@ The design goal is to keep LaTeX diffs minimal and mechanical.
 ## Key invariants
 
 - Minimal LaTeX edits only:
-  - abstract replacement
-  - one-time preamble injection (`xcolor` + `\\AtBeginDocument{\\color{gray}}` + `\\pvhighlight` macro + abstract black override)
-  - `\\pvhighlight{...}` wrappers around important keywords and sentences
+  - abstract replacement (using `\pvreplaceblock{old}{new}` to preserve original layout/spacing)
+  - one-time preamble injection (`xcolor` + `\AtBeginDocument{\color{gray}}` + `\pvhighlight` + `\pvreplaceblock` + abstract black override)
+  - `\pvhighlight{...}` wrappers around important keywords and sentences
 - Color scheme:
-  - Default text color: gray (set via `\\AtBeginDocument{\\color{gray}}`)
-  - Highlighted content: black (via `\\pvhighlight{...}` wrapper)
-  - Abstract: always black (via `\\renewenvironment{abstract}`)
+  - Default text color: gray (set via `\AtBeginDocument{\color{gray}}`)
+  - Highlighted content: black (via `\pvhighlight{...}` wrapper)
+  - Abstract: always black (via `\renewenvironment{abstract}`)
 - Highlight approach (snippet-based):
   - LLM outputs only the text snippets to highlight, one per line
-  - Code searches for each snippet in the original chunk and wraps first match with `\\pvhighlight{...}`
+  - Code searches for each snippet in the original chunk and wraps first match with `\pvhighlight{...}`
   - Unmatched snippets are logged at debug level and skipped
 - Abstract is excluded from the highlight stage (but always rendered in black).
 - `.env` contains secrets and must never be committed.
@@ -48,7 +48,7 @@ The design goal is to keep LaTeX diffs minimal and mechanical.
 - Run tests: `uv run pytest`
 - Show CLI help: `uv run papervibe --help`
 - Process a paper (dry run): `uv run papervibe arxiv 2107.03374 --dry-run`
-- Process a paper (real): `uv run papervibe arxiv 2107.03374 --highlight-ratio 0.4 --concurrency 8`
+- Process a paper (real): `uv run papervibe arxiv 2107.03374 --concurrency 8`
 - Evaluate highlighting on samples: `uv run python harness/eval_highlight.py`
 - Evaluate abstract rewriting: `uv run python harness/eval_abstract.py`
 

@@ -152,35 +152,44 @@ def get_abstract_span(content: str) -> Optional[Tuple[int, int]]:
 
 def replace_abstract(content: str, new_abstract: str) -> str:
     """
-    Replace the abstract in LaTeX content with a new one.
-    
+    Replace the abstract in LaTeX content with a new one, preserving original layout.
+
+    Uses \\pvreplaceblock to overlay the new abstract text on the original abstract's
+    invisible footprint, ensuring the rest of the paper's layout is not affected by
+    abstract length changes.
+
     Args:
         content: Original LaTeX content
         new_abstract: New abstract text
-        
+
     Returns:
         Modified LaTeX content with replaced abstract
-        
+
     Raises:
         LatexError: If abstract not found or replacement fails
     """
     result = extract_abstract(content)
     if result is None:
         raise LatexError("No abstract found in LaTeX content")
-    
-    _, start, end = result
-    
+
+    original_abstract, start, end = result
+
+    # Escape unescaped % signs in new abstract (% starts comments in LaTeX)
+    # Match % that is NOT preceded by a backslash
+    new_abstract_escaped = re.sub(r'(?<!\\)%', r'\\%', new_abstract)
+
     # Preserve the \begin{abstract} and \end{abstract} tags
-    # Just replace what's between them
+    # Use \pvreplaceblock to overlay new text on original footprint
     begin_tag_end = content.find("}", start) + 1
     end_tag_start = content.rfind("\\", start, end)
-    
+
+    # Wrap with \pvreplaceblock{original}{new} to preserve layout
     new_content = (
         content[:begin_tag_end] +
-        "\n" + new_abstract + "\n" +
+        "\n\\pvreplaceblock{" + original_abstract + "}{" + new_abstract_escaped + "}\n" +
         content[end_tag_start:]
     )
-    
+
     return new_content
 
 
@@ -198,8 +207,9 @@ def has_xcolor_and_pvhighlight(content: str) -> bool:
     has_pvhighlight = bool(re.search(r"\\newcommand\{?\\pvhighlight\}?", content))
     has_default_gray = bool(re.search(r"\\AtBeginDocument\{\\color\{gray\}\}", content))
     has_abstract_black = bool(re.search(r"\\pvabstractblack", content))
+    has_replaceblock = bool(re.search(r"\\(long\\)?def\\pvreplaceblock|\\(long\\)?newcommand\{?\\pvreplaceblock\}?", content))
 
-    return has_xcolor and has_pvhighlight and has_default_gray and has_abstract_black
+    return has_xcolor and has_pvhighlight and has_default_gray and has_abstract_black and has_replaceblock
 
 
 def inject_preamble(content: str) -> str:
@@ -239,6 +249,19 @@ def inject_preamble(content: str) -> str:
 
     if not re.search(r"\\newcommand\{?\\pvhighlight\}?", content):
         parts.append("\\newcommand{\\pvhighlight}[1]{\\textcolor{black}{#1}}")
+
+    # Add replaceblock macro for abstract padding
+    # Measures both texts in parbox, outputs new as plain text, adds vspace to compensate
+    if not re.search(r"\\(long\\)?def\\pvreplaceblock|\\(long\\)?newcommand\{?\\pvreplaceblock\}?", content):
+        parts.append("% Replace block macro: plain new text with vspace padding")
+        parts.append("\\newsavebox{\\pvoldbox}")
+        parts.append("\\newsavebox{\\pvnewbox}")
+        parts.append("\\long\\def\\pvreplaceblock#1#2{%")
+        parts.append("  \\savebox{\\pvoldbox}{\\parbox[t]{\\linewidth}{#1}}%")
+        parts.append("  \\savebox{\\pvnewbox}{\\parbox[t]{\\linewidth}{#2}}%")
+        parts.append("  #2\\par%")
+        parts.append("  \\vspace{\\dimexpr\\ht\\pvoldbox+\\dp\\pvoldbox-\\ht\\pvnewbox-\\dp\\pvnewbox\\relax}%")
+        parts.append("}")
 
     # Keep abstract text black (not gray)
     if not re.search(r"\\pvabstractblack", content):
