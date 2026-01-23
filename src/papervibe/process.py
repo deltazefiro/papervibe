@@ -219,14 +219,17 @@ async def highlight_content_parallel(
     Returns:
         Content with \\pvhighlight{} wrappers applied
     """
-    from .highlight import chunk_content
+    from .highlight import chunk_content_with_seps, rejoin_chunks
     from .llm import print_error
 
-    # Split into chunks
-    chunks = chunk_content(content, max_chunk_size=max_chunk_chars)
+    # Split into chunks with separators preserved
+    chunks_with_seps = chunk_content_with_seps(content, max_chunk_size=max_chunk_chars)
 
-    if not chunks:
+    if not chunks_with_seps:
         return content
+
+    # Extract just the chunks for processing
+    chunks = [chunk for chunk, _ in chunks_with_seps]
 
     # Process all chunks in parallel
     try:
@@ -240,7 +243,12 @@ async def highlight_content_parallel(
         for _ in highlighted_chunks:
             progress_callback(1)
 
-    return '\n\n'.join(highlighted_chunks)
+    # Rejoin with original separators
+    highlighted_with_seps = [
+        (highlighted, sep)
+        for highlighted, (_, sep) in zip(highlighted_chunks, chunks_with_seps)
+    ]
+    return rejoin_chunks(highlighted_with_seps)
 
 
 async def process_paper(

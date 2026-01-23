@@ -18,7 +18,7 @@ The design goal is to keep LaTeX diffs minimal and mechanical.
   - `arxiv.py`: arXiv ID parsing + source download/unpack
   - `latex.py`: LaTeX helpers (main file detection, references cutoff, abstract span/replace, preamble injection, wrapper stripping)
   - `llm.py`: AsyncOpenAI wrapper + settings (reads `.env`) + concurrency semaphore
-  - `highlight.py`: chunking + snippet-based highlighting (parse_snippets, apply_highlights)
+  - `highlight.py`: chunking + snippet-based highlighting (parse_snippets, apply_highlights, chunk_content_with_seps)
   - `compile.py`: `latexmk` compilation wrapper
 - `tests/`: pytest suite + LaTeX fixtures (automated, no LLM calls)
 - `harness/`: manual LLM evaluation with side-by-side PDF comparison
@@ -41,6 +41,7 @@ The design goal is to keep LaTeX diffs minimal and mechanical.
   - Code searches for each snippet in the original chunk and wraps first match with `\pvhighlight{...}`
   - Unmatched snippets are logged at debug level and skipped
 - Abstract is excluded from the highlight stage (but always rendered in black).
+- Chunking must preserve original whitespace: use `chunk_content_with_seps()` + `rejoin_chunks()` to avoid corrupting LaTeX tables/environments.
 - `.env` contains secrets and must never be committed.
 
 ## Common commands

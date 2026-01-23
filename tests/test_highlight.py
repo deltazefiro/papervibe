@@ -5,6 +5,8 @@ import time
 import pytest
 from papervibe.highlight import (
     chunk_content,
+    chunk_content_with_seps,
+    rejoin_chunks,
     validate_highlighted_chunk,
 )
 from papervibe.process import (
@@ -69,6 +71,59 @@ def test_chunk_content_empty():
 
     chunks = chunk_content("   \n\n  ")
     assert chunks == []
+
+
+def test_chunk_content_with_seps_preserves_whitespace():
+    """Test that chunk_content_with_seps preserves original whitespace."""
+    content = "First paragraph.\n\nSecond paragraph.\n\nThird paragraph."
+
+    chunks_with_seps = chunk_content_with_seps(content, max_chunk_size=50)
+
+    # Rejoining should give back the original content
+    rejoined = rejoin_chunks(chunks_with_seps)
+    assert rejoined == content
+
+
+def test_chunk_content_with_seps_various_separators():
+    """Test that different separator patterns are preserved."""
+    # Content with varying whitespace between paragraphs
+    content = "Para1.\n\nPara2.\n\n\nPara3.\n\t\nPara4."
+
+    chunks_with_seps = chunk_content_with_seps(content, max_chunk_size=20)
+
+    # Rejoining should preserve all original whitespace
+    rejoined = rejoin_chunks(chunks_with_seps)
+    assert rejoined == content
+
+
+def test_chunk_content_with_seps_table_row():
+    """Test that table rows are not corrupted by chunking."""
+    # Simulate a LaTeX table with long rows and no blank lines between them
+    table_content = """Row1 & Col1 & Col2 & Col3 \\\\
+Row2 & Col1 & Col2 & Col3 \\\\
+Row3 & Col1 & Col2 & Col3 \\\\"""
+
+    chunks_with_seps = chunk_content_with_seps(table_content, max_chunk_size=50)
+    rejoined = rejoin_chunks(chunks_with_seps)
+
+    # Should not have blank lines inserted in the middle of the table
+    assert rejoined == table_content
+    # There should be no \n\n in the result since there were none in the input
+    assert "\n\n" not in rejoined
+
+
+def test_chunk_content_with_seps_large_paragraph():
+    """Test force-split of large paragraph preserves content."""
+    # Create content larger than HARD_LIMIT (3x max_chunk_size)
+    large_content = "A" * 5000  # No blank lines, no sentence breaks
+
+    chunks_with_seps = chunk_content_with_seps(large_content, max_chunk_size=1000)
+    rejoined = rejoin_chunks(chunks_with_seps)
+
+    # Content should be preserved exactly
+    assert rejoined == large_content
+    # Verify it was actually split
+    assert len(chunks_with_seps) > 1
 
 
 def test_validate_highlighted_chunk_valid():
