@@ -36,3 +36,6 @@ out/
 
 # OS
 .DS_Store
+
+# LLM TLDR cache
+.tldr/
