@@ -562,12 +562,11 @@ async def process_paper(
     modified_main = modified_dir / main_tex.name
     modified_main.write_text(modified_content, encoding="utf-8")
 
-    # Overwrite modified input files
-    if not skip_highlight:
-        for input_file, highlighted_content in modified_input_files.items():
-            rel_path = input_file.relative_to(source_dir)
-            output_file = modified_dir / rel_path
-            output_file.write_text(highlighted_content, encoding="utf-8")
+    # Overwrite modified input files (abstract rewrites and/or highlights)
+    for input_file, content in modified_input_files.items():
+        rel_path = input_file.relative_to(source_dir)
+        output_file = modified_dir / rel_path
+        output_file.write_text(content, encoding="utf-8")
 
     logger.info("Modified files in: %s", modified_dir)
 
