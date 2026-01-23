@@ -23,10 +23,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from papervibe.compile import compile_latex, check_latexmk_available, CompileError
 from papervibe.latex import find_main_tex_file
+from papervibe.logging import setup_logging
 from papervibe.process import process_paper
-
-# Configure logging to see process_paper output
-logging.basicConfig(level=logging.INFO, format="  %(message)s")
 
 # Stub lorem text to simulate LLM-rewritten abstract (intentionally different length)
 STUB_ABSTRACT = """Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum."""
@@ -367,8 +365,17 @@ def main():
         action="store_true",
         help="Use stub lorem abstract instead of LLM-generated abstract",
     )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="count",
+        default=0,
+        help="Enable verbose logging (use -v for debug, -vv for more detail)",
+    )
 
     args = parser.parse_args()
+
+    setup_logging(verbose=args.verbose)
 
     if not check_latexmk_available():
         print("Error: latexmk not found. Please install TeX Live or similar.")
