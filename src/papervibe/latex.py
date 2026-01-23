@@ -287,7 +287,7 @@ def inject_preamble(content: str) -> str:
         parts.append("\\long\\def\\pvreplaceblock#1#2{%")
         parts.append("  \\savebox{\\pvoldbox}{\\parbox[t]{\\linewidth}{#1}}%")
         parts.append("  \\savebox{\\pvnewbox}{\\parbox[t]{\\linewidth}{#2}}%")
-        parts.append("  #2\\par%")
+        parts.append("  #2%")
         parts.append("  \\vspace{\\dimexpr\\ht\\pvoldbox+\\dp\\pvoldbox-\\ht\\pvnewbox-\\dp\\pvnewbox\\relax}%")
         parts.append("}")
 

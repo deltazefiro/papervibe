@@ -42,6 +42,7 @@ The design goal is to keep LaTeX diffs minimal and mechanical.
   - Unmatched snippets are logged at debug level and skipped
 - Abstract is excluded from the highlight stage (but always rendered in black).
 - Chunking must preserve original whitespace: use `chunk_content_with_seps()` + `rejoin_chunks()` to avoid corrupting LaTeX tables/environments.
+- `\pvreplaceblock` must NOT add `\par` after content—explicit paragraph breaks alter LaTeX's spacing calculations, causing footnotes/layout to shift (especially in two-column papers).
 - `.env` contains secrets and must never be committed.
 
 ## Common commands
@@ -61,5 +62,6 @@ By default, results are written under `out/<id>/`:
 - `modified/`: modified sources used for compilation
 - `<id>.pdf`: compiled PDF (if compilation succeeds)
 
-## Notes
+## Conventions
 - LLM timeout should be at least 120 seconds. Long outputs may need even more.
+- Keep CLAUDE.md concise.
