@@ -12,6 +12,32 @@ class LatexError(Exception):
     pass
 
 
+def strip_latex_comments(text: str) -> str:
+    """
+    Remove LaTeX comments (unescaped % to end of line) from text.
+
+    Args:
+        text: LaTeX text potentially containing comments
+
+    Returns:
+        Text with comments removed
+    """
+    lines = text.split('\n')
+    result_lines = []
+    for line in lines:
+        # Find unescaped % and remove from there to end of line
+        new_line = []
+        i = 0
+        while i < len(line):
+            if line[i] == '%' and (i == 0 or line[i-1] != '\\'):
+                # Found unescaped %, skip rest of line
+                break
+            new_line.append(line[i])
+            i += 1
+        result_lines.append(''.join(new_line))
+    return '\n'.join(result_lines)
+
+
 def find_main_tex_file(directory: Path) -> Path:
     """
     Find the main .tex file in a directory using heuristic scoring.
@@ -111,25 +137,27 @@ def find_references_cutoff(content: str) -> Optional[int]:
 def extract_abstract(content: str) -> Optional[Tuple[str, int, int]]:
     """
     Extract the abstract from LaTeX content.
-    
+
     Args:
         content: LaTeX file content
-        
+
     Returns:
         Tuple of (abstract_text, start_offset, end_offset) or None if not found
-        The offsets point to the \\begin{abstract} and \\end{abstract} commands
+        The offsets point to the \\begin{abstract} and \\end{abstract} commands.
+        The abstract_text has LaTeX comments stripped.
     """
     # Find \begin{abstract}...\end{abstract}
     pattern = r"(\\begin\{abstract\})(.*?)(\\end\{abstract\})"
     match = re.search(pattern, content, re.DOTALL | re.IGNORECASE)
-    
+
     if not match:
         return None
-    
-    abstract_text = match.group(2).strip()
+
+    # Strip LaTeX comments from the abstract text
+    abstract_text = strip_latex_comments(match.group(2)).strip()
     start = match.start()
     end = match.end()
-    
+
     return abstract_text, start, end
 
 
@@ -172,13 +200,10 @@ def replace_abstract(content: str, new_abstract: str) -> str:
     if result is None:
         raise LatexError("No abstract found in LaTeX content")
 
+    # extract_abstract returns abstract with comments already stripped
     original_abstract, start, end = result
 
-    # Escape unescaped % signs in both abstracts (% starts comments in LaTeX)
-    # Match % that is NOT preceded by a backslash
-    # This is critical for \pvreplaceblock{old}{new} - unescaped % in either
-    # argument would comment out the rest of the line including the closing braces
-    original_abstract_escaped = re.sub(r'(?<!\\)%', r'\\%', original_abstract)
+    # Escape % in new abstract (preserves literal % characters)
     new_abstract_escaped = re.sub(r'(?<!\\)%', r'\\%', new_abstract)
 
     # Preserve the \begin{abstract} and \end{abstract} tags
@@ -189,7 +214,7 @@ def replace_abstract(content: str, new_abstract: str) -> str:
     # Wrap with \pvreplaceblock{original}{new} to preserve layout
     new_content = (
         content[:begin_tag_end] +
-        "\n\\pvreplaceblock{" + original_abstract_escaped + "}{" + new_abstract_escaped + "}\n" +
+        "\n\\pvreplaceblock{" + original_abstract + "}{" + new_abstract_escaped + "}\n" +
         content[end_tag_start:]
     )
 
