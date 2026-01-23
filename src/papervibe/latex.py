@@ -174,8 +174,11 @@ def replace_abstract(content: str, new_abstract: str) -> str:
 
     original_abstract, start, end = result
 
-    # Escape unescaped % signs in new abstract (% starts comments in LaTeX)
+    # Escape unescaped % signs in both abstracts (% starts comments in LaTeX)
     # Match % that is NOT preceded by a backslash
+    # This is critical for \pvreplaceblock{old}{new} - unescaped % in either
+    # argument would comment out the rest of the line including the closing braces
+    original_abstract_escaped = re.sub(r'(?<!\\)%', r'\\%', original_abstract)
     new_abstract_escaped = re.sub(r'(?<!\\)%', r'\\%', new_abstract)
 
     # Preserve the \begin{abstract} and \end{abstract} tags
@@ -186,7 +189,7 @@ def replace_abstract(content: str, new_abstract: str) -> str:
     # Wrap with \pvreplaceblock{original}{new} to preserve layout
     new_content = (
         content[:begin_tag_end] +
-        "\n\\pvreplaceblock{" + original_abstract + "}{" + new_abstract_escaped + "}\n" +
+        "\n\\pvreplaceblock{" + original_abstract_escaped + "}{" + new_abstract_escaped + "}\n" +
         content[end_tag_start:]
     )
 
