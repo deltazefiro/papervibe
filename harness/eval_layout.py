@@ -1,17 +1,35 @@
-"""Evaluation harness for layout preservation: verify first page text matches between original and modified PDFs."""
+"""Evaluation harness for layout preservation: verify second page text matches between original and modified PDFs.
+
+The abstract should only affect the first page layout. By replacing the abstract with
+stub lorem text (simulating LLM rewrites of varying lengths), the second page should
+remain identical between original and modified PDFs if layout is preserved correctly.
+
+This harness patches the main program's rewrite_abstract function to return stub text,
+ensuring the test uses the exact same code path as the main CLI.
+"""
 
 import argparse
+import asyncio
 import difflib
+import logging
 import re
-import subprocess
+import shutil
 import sys
 from pathlib import Path
+from unittest.mock import patch, AsyncMock
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from papervibe.compile import compile_latex, check_latexmk_available, CompileError
 from papervibe.latex import find_main_tex_file
+from papervibe.process import process_paper
+
+# Configure logging to see process_paper output
+logging.basicConfig(level=logging.INFO, format="  %(message)s")
+
+# Stub lorem text to simulate LLM-rewritten abstract (intentionally different length)
+STUB_ABSTRACT = """Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum."""
 
 
 def create_comparison_image(
@@ -68,23 +86,23 @@ def create_comparison_image(
         return False
 
 
-def extract_first_page_text(pdf_path: Path) -> str:
+def extract_second_page_text(pdf_path: Path) -> str:
     """
-    Extract text from the first page of a PDF.
+    Extract text from the second page of a PDF.
 
     Args:
         pdf_path: Path to the PDF file
 
     Returns:
-        Text content of the first page
+        Text content of the second page, or empty string if PDF has less than 2 pages
     """
     import fitz  # PyMuPDF
 
     doc = fitz.open(pdf_path)
     try:
-        if len(doc) == 0:
+        if len(doc) < 2:
             return ""
-        page = doc[0]
+        page = doc[1]  # Second page (0-indexed)
         return page.get_text()
     finally:
         doc.close()
@@ -107,46 +125,74 @@ def normalize_text(text: str) -> str:
     return text
 
 
-def run_pipeline(arxiv_id: str, output_dir: Path) -> bool:
+async def stub_rewrite_abstract(llm_client, original_abstract: str) -> str:
+    """Stub function that returns lorem ipsum instead of calling LLM."""
+    return STUB_ABSTRACT
+
+
+async def run_pipeline(arxiv_id: str, output_dir: Path, dry_run: bool = False) -> bool:
     """
-    Run the papervibe pipeline with --dry-run.
+    Run the papervibe pipeline with skip_highlight.
 
     Args:
         arxiv_id: arXiv paper ID
         output_dir: Output directory
+        dry_run: If True, use stub abstract instead of LLM
 
     Returns:
         True if successful, False otherwise
     """
-    cmd = [
-        "uv",
-        "run",
-        "papervibe",
-        "arxiv",
-        arxiv_id,
-        "--out",
-        str(output_dir),
-        "--dry-run",
-    ]
-    print(f"  Running: {' '.join(cmd)}")
-
-    result = subprocess.run(cmd, capture_output=True, text=True)
-
-    if result.returncode != 0:
-        print(f"  Pipeline failed:")
-        print(result.stderr)
+    try:
+        if dry_run:
+            # Patch rewrite_abstract to return stub text instead of calling LLM
+            with patch("papervibe.process.rewrite_abstract", new=stub_rewrite_abstract):
+                await process_paper(
+                    url=arxiv_id,
+                    out=output_dir,
+                    skip_abstract=False,
+                    skip_highlight=True,
+                    skip_compile=True,
+                    highlight_ratio=0.4,
+                    concurrency=1,
+                    dry_run=False,  # Not CLI dry_run - we want abstract replacement
+                    llm_timeout=120.0,
+                    max_chunk_chars=1500,
+                    validate_chunks=False,
+                )
+        else:
+            # Real LLM abstract
+            await process_paper(
+                url=arxiv_id,
+                out=output_dir,
+                skip_abstract=False,
+                skip_highlight=True,
+                skip_compile=True,
+                highlight_ratio=0.4,
+                concurrency=1,
+                dry_run=False,
+                llm_timeout=120.0,
+                max_chunk_chars=1500,
+                validate_chunks=False,
+            )
+        return True
+    except Exception as e:
+        print(f"  Pipeline error: {e}")
         return False
 
-    return True
 
-
-def evaluate_paper(arxiv_id: str, base_output_dir: Path) -> dict:
+def evaluate_paper(arxiv_id: str, base_output_dir: Path, dry_run: bool = False) -> dict:
     """
     Evaluate layout preservation for a single paper.
+
+    Workflow:
+    1. Run pipeline (with real LLM abstract, or stub if dry_run)
+    2. Compile both original and modified sources
+    3. Compare second page text (should be identical)
 
     Args:
         arxiv_id: arXiv paper ID
         base_output_dir: Base output directory
+        dry_run: If True, use stub abstract instead of LLM
 
     Returns:
         Dictionary with evaluation results
@@ -157,8 +203,15 @@ def evaluate_paper(arxiv_id: str, base_output_dir: Path) -> dict:
 
     print(f"\nEvaluating {arxiv_id}...")
 
-    # Step 1: Run pipeline with --dry-run
-    if not run_pipeline(arxiv_id, output_dir):
+    # Clear output directory to ensure fresh results
+    if output_dir.exists():
+        shutil.rmtree(output_dir)
+        print(f"  Cleared existing output: {output_dir}")
+
+    # Step 1: Run pipeline
+    mode = "stub abstract" if dry_run else "LLM abstract"
+    print(f"  Running pipeline with {mode}...")
+    if not asyncio.run(run_pipeline(arxiv_id, output_dir, dry_run=dry_run)):
         return {
             "arxiv_id": arxiv_id,
             "success": False,
@@ -183,11 +236,13 @@ def evaluate_paper(arxiv_id: str, base_output_dir: Path) -> dict:
             "error": f"Modified directory not found: {modified_dir}",
         }
 
-    # Step 2: Find main tex file and compile original
+    # Step 2: Compile original
     print(f"  Compiling original sources...")
     try:
         main_tex = find_main_tex_file(original_dir)
-        original_pdf_path, _ = compile_latex(main_tex, output_dir=original_dir, timeout=300)
+        original_pdf_path, _ = compile_latex(
+            main_tex, output_dir=original_dir, timeout=300
+        )
         print(f"  Original PDF: {original_pdf_path}")
     except (CompileError, FileNotFoundError) as e:
         return {
@@ -196,24 +251,20 @@ def evaluate_paper(arxiv_id: str, base_output_dir: Path) -> dict:
             "error": f"Original compilation failed: {e}",
         }
 
-    # Step 3: Get modified PDF (already compiled by pipeline)
-    modified_pdf_path = output_dir / f"{safe_id}.pdf"
-    if not modified_pdf_path.exists():
-        # Try looking in modified directory
-        try:
-            modified_main = find_main_tex_file(modified_dir)
-            modified_pdf_path = modified_dir / f"{modified_main.stem}.pdf"
-        except FileNotFoundError:
-            pass
-
-    if not modified_pdf_path.exists():
+    # Step 3: Compile modified
+    print(f"  Compiling modified sources...")
+    try:
+        modified_main = find_main_tex_file(modified_dir)
+        modified_pdf_path, _ = compile_latex(
+            modified_main, output_dir=modified_dir, timeout=300
+        )
+        print(f"  Modified PDF: {modified_pdf_path}")
+    except (CompileError, FileNotFoundError) as e:
         return {
             "arxiv_id": arxiv_id,
             "success": False,
-            "error": f"Modified PDF not found: {modified_pdf_path}",
+            "error": f"Modified compilation failed: {e}",
         }
-
-    print(f"  Modified PDF: {modified_pdf_path}")
 
     # Step 4: Create side-by-side comparison image
     print(f"  Creating comparison image...")
@@ -224,11 +275,11 @@ def evaluate_paper(arxiv_id: str, base_output_dir: Path) -> dict:
     if comparison_created:
         print(f"  Comparison image: {comparison_jpg}")
 
-    # Step 5: Extract first page text
-    print(f"  Extracting first page text...")
+    # Step 5: Extract second page text
+    print(f"  Extracting second page text...")
     try:
-        original_text = extract_first_page_text(original_pdf_path)
-        modified_text = extract_first_page_text(modified_pdf_path)
+        original_text = extract_second_page_text(original_pdf_path)
+        modified_text = extract_second_page_text(modified_pdf_path)
     except Exception as e:
         return {
             "arxiv_id": arxiv_id,
@@ -236,12 +287,26 @@ def evaluate_paper(arxiv_id: str, base_output_dir: Path) -> dict:
             "error": f"Text extraction failed: {e}",
         }
 
+    # Check if PDFs have at least 2 pages
+    if not original_text:
+        return {
+            "arxiv_id": arxiv_id,
+            "success": False,
+            "error": "Original PDF has less than 2 pages",
+        }
+    if not modified_text:
+        return {
+            "arxiv_id": arxiv_id,
+            "success": False,
+            "error": "Modified PDF has less than 2 pages",
+        }
+
     # Step 6: Normalize and compare
     original_normalized = normalize_text(original_text)
     modified_normalized = normalize_text(modified_text)
 
     if original_normalized == modified_normalized:
-        print(f"  PASS: First page text matches")
+        print(f"  PASS: Second page text matches")
         return {
             "arxiv_id": arxiv_id,
             "success": True,
@@ -249,20 +314,22 @@ def evaluate_paper(arxiv_id: str, base_output_dir: Path) -> dict:
             "comparison_image": str(comparison_jpg) if comparison_created else None,
         }
     else:
-        print(f"  FAIL: First page text differs")
+        print(f"  FAIL: Second page text differs")
 
         # Generate diff for debugging
         original_words = original_normalized.split()
         modified_words = modified_normalized.split()
 
-        diff = list(difflib.unified_diff(
-            original_words,
-            modified_words,
-            fromfile="original",
-            tofile="modified",
-            lineterm="",
-            n=3,
-        ))
+        diff = list(
+            difflib.unified_diff(
+                original_words,
+                modified_words,
+                fromfile="original",
+                tofile="modified",
+                lineterm="",
+                n=3,
+            )
+        )
 
         diff_text = "\n".join(diff[:50])  # Limit output
         if len(diff) > 50:
@@ -281,7 +348,7 @@ def evaluate_paper(arxiv_id: str, base_output_dir: Path) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Evaluate layout preservation between original and modified PDFs"
+        description="Evaluate layout preservation by comparing second page text between original and modified PDFs"
     )
     parser.add_argument(
         "arxiv_ids",
@@ -295,6 +362,11 @@ def main():
         default=Path(__file__).parent / "out" / "layout",
         help="Output directory for results",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Use stub lorem abstract instead of LLM-generated abstract",
+    )
 
     args = parser.parse_args()
 
@@ -304,12 +376,13 @@ def main():
 
     print(f"Evaluating {len(args.arxiv_ids)} paper(s)...")
     print(f"Output directory: {args.output_dir}")
+    print(f"Mode: {'dry-run (stub abstract)' if args.dry_run else 'LLM abstract'}")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     results = []
     for arxiv_id in args.arxiv_ids:
-        result = evaluate_paper(arxiv_id, args.output_dir)
+        result = evaluate_paper(arxiv_id, args.output_dir, dry_run=args.dry_run)
         results.append(result)
 
     # Summary
@@ -344,7 +417,9 @@ def main():
             failed += 1
 
     print("\n" + "-" * 60)
-    print(f"Total: {len(results)} | Passed: {passed} | Failed: {failed} | Errors: {errors}")
+    print(
+        f"Total: {len(results)} | Passed: {passed} | Failed: {failed} | Errors: {errors}"
+    )
 
     return 0 if (failed == 0 and errors == 0) else 1
 
