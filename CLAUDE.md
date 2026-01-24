@@ -42,7 +42,8 @@ The design goal is to keep LaTeX diffs minimal and mechanical.
   - Unmatched snippets are logged at debug level and skipped
 - Abstract is excluded from the highlight stage (but always rendered in black).
 - Chunking must preserve original whitespace: use `chunk_content_with_seps()` + `rejoin_chunks()` to avoid corrupting LaTeX tables/environments.
-- `\pvreplaceblock` must NOT add `\par` after content—explicit paragraph breaks alter LaTeX's spacing calculations, causing footnotes/layout to shift (especially in two-column papers).
+- `\pvreplaceblock{old}{new}` boxes the original content to get its exact height, then creates a vbox of that height with new content at top. This guarantees identical vertical footprint.
+- Footnotes in abstracts: `rewrite_abstract()` extracts footnotes from original and appends them to the rewritten abstract to preserve page layout.
 - `.env` contains secrets and must never be committed.
 
 ## Common commands
