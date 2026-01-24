@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from papervibe.compile import compile_latex, check_latexmk_available, CompileError
 from papervibe.latex import find_main_tex_file
 from papervibe.logging import setup_logging
-from papervibe.process import process_paper
+from papervibe.process import process_paper, extract_footnotes
 
 # Stub lorem text to simulate LLM-rewritten abstract (intentionally different length)
 STUB_ABSTRACT = """Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum."""
@@ -124,8 +124,15 @@ def normalize_text(text: str) -> str:
 
 
 async def stub_rewrite_abstract(llm_client, original_abstract: str) -> str:
-    """Stub function that returns lorem ipsum instead of calling LLM."""
-    return STUB_ABSTRACT
+    """Stub function that returns lorem ipsum instead of calling LLM.
+
+    Preserves footnotes from original abstract to match real rewrite_abstract behavior.
+    """
+    _, footnotes = extract_footnotes(original_abstract)
+    result = STUB_ABSTRACT
+    if footnotes:
+        result = result.rstrip() + " " + " ".join(footnotes)
+    return result
 
 
 async def run_pipeline(arxiv_id: str, output_dir: Path, dry_run: bool = False) -> bool:

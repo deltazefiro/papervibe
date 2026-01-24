@@ -299,25 +299,15 @@ def inject_preamble(content: str) -> str:
     # Add replaceblock macro for abstract padding
     # Goal: Replace abstract text while preserving exact vertical space of original
     #
-    # Constraints:
-    # - Footnotes: The text may contain \footnote{...}. These must appear at the bottom of the page.
-    # - Italics: Some abstracts use \it.
-    # - Two-column: Some paper may use the two column layout and the abstract may span across both columns. Some may not.
-    #
-    # Current design rationale:
-    # - Use vbox (not parbox) for measurement: parbox treats footnotes as inline text,
-    #   but we need to ignore them since they appear at page bottom, not in abstract body
-    # - Strip footnotes during measurement: they're preserved separately and appended
-    #   to new abstract in process.py to maintain page bottom layout
-    # - Capture current font (\the\font): abstract environments often use \it (italic),
-    #   and font affects line-breaking and thus height measurement
-    # - Output content directly (not from box): allows footnotes to work normally
-    # - Use \ignorespaces/\unskip: handles varying whitespace in source files consistently
-    # - Compensate with vspace: difference between old and new heights fills the gap
+    # Strategy:
+    # - Measure old/new content in vbox with footnotes stripped (they appear at page bottom)
+    # - Output new content directly (allows footnotes to work normally)
+    # - Use rigid \kern for padding (not \vskip which can stretch/shrink)
+    # - Capture current font for accurate line-breaking during measurement
     #
     # Known limitations:
-    # - Abstracts using \input{} are not expanded; extraction sees only the \input command
-    # - Complex font/spacing environments may cause slight height mismatches
+    # - Abstracts using \input{} are not expanded
+    # - Different footnote footprint in old vs new may affect downstream breaks
     if not re.search(
         r"\\(long\\)?def\\pvreplaceblock|\\(long\\)?newcommand\{?\\pvreplaceblock\}?",
         content,
@@ -326,24 +316,23 @@ def inject_preamble(content: str) -> str:
         parts.append("\\newsavebox{\\pvoldbox}")
         parts.append("\\newsavebox{\\pvnewbox}")
         parts.append("\\long\\def\\pvreplaceblock#1#2{%")
-        parts.append(
-            "  \\edef\\pvfont{\\the\\font}%"
-        )  # capture font (e.g., italic in CVPR/ICLR)
-        parts.append(
-            "  \\begingroup\\renewcommand{\\footnote}[1]{}%"
-        )  # strip footnotes for measurement
+        # Capture current font
+        parts.append("  \\edef\\pvfont{\\the\\font}%")
+        # Measure OLD content (strip footnotes for measurement)
+        parts.append("  \\begingroup\\renewcommand{\\footnote}[1]{}%")
         parts.append(
             "    \\global\\setbox\\pvoldbox=\\vbox{\\hsize=\\linewidth\\pvfont\\noindent\\ignorespaces #1\\unskip}%"
         )
-        parts.append("  \\endgroup")
+        parts.append("  \\endgroup%")
+        # Measure NEW content (strip footnotes for measurement)
         parts.append("  \\begingroup\\renewcommand{\\footnote}[1]{}%")
         parts.append(
             "    \\global\\setbox\\pvnewbox=\\vbox{\\hsize=\\linewidth\\pvfont\\noindent\\ignorespaces #2\\unskip}%"
         )
-        parts.append("  \\endgroup")
-        parts.append(
-            "  \\noindent\\ignorespaces #2\\unskip%"
-        )  # output directly so footnotes work
+        parts.append("  \\endgroup%")
+        # Output new content directly (allows footnotes to work)
+        parts.append("  \\noindent\\ignorespaces #2\\unskip%")
+        # Compensate with vspace for height difference
         parts.append(
             "  \\par\\vspace{\\dimexpr\\ht\\pvoldbox+\\dp\\pvoldbox-\\ht\\pvnewbox-\\dp\\pvnewbox\\relax}%"
         )
