@@ -200,21 +200,23 @@ def replace_abstract(content: str, new_abstract: str) -> str:
     if result is None:
         raise LatexError("No abstract found in LaTeX content")
 
-    # extract_abstract returns abstract with comments already stripped
-    original_abstract, start, end = result
+    # extract_abstract returns stripped abstract, but we need raw content for pvreplaceblock
+    _, start, end = result
 
     # Escape % in new abstract (preserves literal % characters)
     new_abstract_escaped = re.sub(r'(?<!\\)%', r'\\%', new_abstract)
 
-    # Preserve the \begin{abstract} and \end{abstract} tags
-    # Use \pvreplaceblock to overlay new text on original footprint
+    # Find exact positions of begin and end tags
     begin_tag_end = content.find("}", start) + 1
     end_tag_start = content.rfind("\\", start, end)
+
+    # Get raw content between tags (preserving all whitespace for accurate measurement)
+    raw_original = content[begin_tag_end:end_tag_start]
 
     # Wrap with \pvreplaceblock{original}{new} to preserve layout
     new_content = (
         content[:begin_tag_end] +
-        "\n\\pvreplaceblock{" + original_abstract + "}{" + new_abstract_escaped + "}\n" +
+        "\\pvreplaceblock{" + raw_original + "}{" + new_abstract_escaped + "}" +
         content[end_tag_start:]
     )
 
@@ -279,16 +281,26 @@ def inject_preamble(content: str) -> str:
         parts.append("\\newcommand{\\pvhighlight}[1]{\\textcolor{black}{#1}}")
 
     # Add replaceblock macro for abstract padding
-    # Measures both texts in parbox, outputs new as plain text, adds vspace to compensate
+    # Measures heights with vbox, uses current font, outputs directly, compensates with vspace
     if not re.search(r"\\(long\\)?def\\pvreplaceblock|\\(long\\)?newcommand\{?\\pvreplaceblock\}?", content):
-        parts.append("% Replace block macro: plain new text with vspace padding")
+        parts.append("% Replace block macro: vbox measure with font, direct output, vspace compensate")
         parts.append("\\newsavebox{\\pvoldbox}")
         parts.append("\\newsavebox{\\pvnewbox}")
         parts.append("\\long\\def\\pvreplaceblock#1#2{%")
-        parts.append("  \\savebox{\\pvoldbox}{\\parbox[t]{\\linewidth}{#1}}%")
-        parts.append("  \\savebox{\\pvnewbox}{\\parbox[t]{\\linewidth}{#2}}%")
-        parts.append("  #2%")
-        parts.append("  \\vspace{\\dimexpr\\ht\\pvoldbox+\\dp\\pvoldbox-\\ht\\pvnewbox-\\dp\\pvnewbox\\relax}%")
+        # Save current font for measurement
+        parts.append("  \\edef\\pvfont{\\the\\font}%")
+        # Measure old content (ignore footnotes, use current font)
+        parts.append("  \\begingroup\\renewcommand{\\footnote}[1]{}%")
+        parts.append("    \\global\\setbox\\pvoldbox=\\vbox{\\hsize=\\linewidth\\pvfont\\noindent\\ignorespaces #1\\unskip}%")
+        parts.append("  \\endgroup")
+        # Measure new content (ignore footnotes, use current font)
+        parts.append("  \\begingroup\\renewcommand{\\footnote}[1]{}%")
+        parts.append("    \\global\\setbox\\pvnewbox=\\vbox{\\hsize=\\linewidth\\pvfont\\noindent\\ignorespaces #2\\unskip}%")
+        parts.append("  \\endgroup")
+        # Output new content directly (consistent whitespace handling with measurement)
+        parts.append("  \\noindent\\ignorespaces #2\\unskip%")
+        # Add vspace to compensate for height difference
+        parts.append("  \\par\\vspace{\\dimexpr\\ht\\pvoldbox+\\dp\\pvoldbox-\\ht\\pvnewbox-\\dp\\pvnewbox\\relax}%")
         parts.append("}")
 
     # Keep abstract text black (not gray)

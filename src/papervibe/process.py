@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 import shutil
 from pathlib import Path
 from typing import Optional, List, Tuple, Callable
@@ -24,6 +25,44 @@ from .compile import compile_latex, check_latexmk_available
 logger = logging.getLogger(__name__)
 
 
+def extract_footnotes(text: str) -> Tuple[str, List[str]]:
+    """
+    Extract \\footnote{...} commands from text.
+
+    Args:
+        text: LaTeX text potentially containing footnotes
+
+    Returns:
+        Tuple of (text_without_footnotes, list_of_footnote_commands)
+    """
+    footnotes = []
+    result = []
+    i = 0
+
+    while i < len(text):
+        # Look for \footnote{
+        if text[i:i+10] == "\\footnote{":
+            # Find the matching closing brace
+            start = i
+            i += 10
+            brace_level = 1
+
+            while i < len(text) and brace_level > 0:
+                if text[i] == "{" and (i == 0 or text[i-1] != "\\"):
+                    brace_level += 1
+                elif text[i] == "}" and (i == 0 or text[i-1] != "\\"):
+                    brace_level -= 1
+                i += 1
+
+            # Extract the full footnote command
+            footnotes.append(text[start:i])
+        else:
+            result.append(text[i])
+            i += 1
+
+    return "".join(result), footnotes
+
+
 async def rewrite_abstract(
     llm_client: LLMClient,
     original_abstract: str,
@@ -31,12 +70,15 @@ async def rewrite_abstract(
     """
     Rewrite an abstract to be more clear and engaging.
 
+    Footnotes from the original abstract are preserved and appended to the
+    rewritten abstract to maintain page layout (footnotes affect page bottom space).
+
     Args:
         llm_client: LLM client for processing
         original_abstract: Original abstract text
 
     Returns:
-        Rewritten abstract text
+        Rewritten abstract text with original footnotes preserved
 
     Raises:
         Exception: On non-retryable errors
@@ -53,9 +95,13 @@ async def rewrite_abstract(
     if llm_client.dry_run:
         return original_abstract
 
+    # Extract footnotes to preserve them (they affect page layout)
+    abstract_without_footnotes, footnotes = extract_footnotes(original_abstract)
+
     renderer = get_renderer()
     system_prompt = renderer.render_rewrite_abstract_system()
-    user_prompt = renderer.render_rewrite_abstract_user(original_abstract)
+    # Send abstract without footnotes to LLM (cleaner input)
+    user_prompt = renderer.render_rewrite_abstract_user(abstract_without_footnotes)
 
     try:
         result = await llm_client.complete_structured(
@@ -65,7 +111,11 @@ async def rewrite_abstract(
             response_model=RewrittenAbstract,
             temperature=0.7,
         )
-        return result.abstract
+        rewritten = result.abstract
+        # Append original footnotes to preserve page layout
+        if footnotes:
+            rewritten = rewritten.rstrip() + " " + " ".join(footnotes)
+        return rewritten
     except asyncio.TimeoutError:
         llm_client.stats["abstract_timeouts"] += 1
         logger.warning(
