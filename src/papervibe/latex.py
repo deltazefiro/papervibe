@@ -297,45 +297,24 @@ def inject_preamble(content: str) -> str:
         parts.append("\\newcommand{\\pvhighlight}[1]{\\textcolor{black}{#1}}")
 
     # Add replaceblock macro for abstract padding
-    # Goal: Replace abstract text while preserving exact vertical space of original
-    #
-    # Strategy:
-    # - Measure old/new content in vbox with footnotes stripped (they appear at page bottom)
-    # - Output new content directly (allows footnotes to work normally)
-    # - Use rigid \kern for padding (not \vskip which can stretch/shrink)
-    # - Capture current font for accurate line-breaking during measurement
-    #
-    # Known limitations:
-    # - Abstracts using \input{} are not expanded
-    # - Different footnote footprint in old vs new may affect downstream breaks
+    # Strategy: Box original in white, overlay new text at top using \vbox to \ht
+    # This guarantees identical vertical footprint since original determines height
     if not re.search(
         r"\\(long\\)?def\\pvreplaceblock|\\(long\\)?newcommand\{?\\pvreplaceblock\}?",
         content,
     ):
-        parts.append("% Replace block macro: preserves original abstract height")
+        parts.append("% Replace block macro: overlay new on white original")
         parts.append("\\newsavebox{\\pvoldbox}")
-        parts.append("\\newsavebox{\\pvnewbox}")
         parts.append("\\long\\def\\pvreplaceblock#1#2{%")
-        # Capture current font
-        parts.append("  \\edef\\pvfont{\\the\\font}%")
-        # Measure OLD content (strip footnotes for measurement)
-        parts.append("  \\begingroup\\renewcommand{\\footnote}[1]{}%")
+        # Box the original content (determines final height)
         parts.append(
-            "    \\global\\setbox\\pvoldbox=\\vbox{\\hsize=\\linewidth\\pvfont\\noindent\\ignorespaces #1\\unskip}%"
+            "  \\sbox\\pvoldbox{\\begin{minipage}{\\linewidth}\\ignorespaces #1\\unskip\\end{minipage}}%"
         )
-        parts.append("  \\endgroup%")
-        # Measure NEW content (strip footnotes for measurement)
-        parts.append("  \\begingroup\\renewcommand{\\footnote}[1]{}%")
-        parts.append(
-            "    \\global\\setbox\\pvnewbox=\\vbox{\\hsize=\\linewidth\\pvfont\\noindent\\ignorespaces #2\\unskip}%"
-        )
-        parts.append("  \\endgroup%")
-        # Output new content directly (allows footnotes to work)
-        parts.append("  \\noindent\\ignorespaces #2\\unskip%")
-        # Compensate with vspace for height difference
-        parts.append(
-            "  \\par\\vspace{\\dimexpr\\ht\\pvoldbox+\\dp\\pvoldbox-\\ht\\pvnewbox-\\dp\\pvnewbox\\relax}%"
-        )
+        # Create a vbox of exact same height, with new content at top
+        parts.append("  \\vbox to \\dimexpr\\ht\\pvoldbox+\\dp\\pvoldbox\\relax{%")
+        parts.append("    \\noindent\\ignorespaces #2\\unskip%")
+        parts.append("    \\vfill%")
+        parts.append("  }%")
         parts.append("}")
 
     # Keep abstract text black (not gray)
