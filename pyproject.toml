@@ -57,6 +57,10 @@ build-backend = "hatchling.build"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+asyncio_mode = "auto"
+markers = [
+    "integration: marks tests as integration tests (may download papers, require latexmk)",
+]
 
 [dependency-groups]
 dev = [

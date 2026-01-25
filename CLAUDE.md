@@ -21,6 +21,9 @@ The design goal is to keep LaTeX diffs minimal and mechanical.
   - `highlight.py`: chunking + snippet-based highlighting (parse_snippets, apply_highlights, chunk_content_with_seps)
   - `compile.py`: `latexmk` compilation wrapper
 - `tests/`: pytest suite + LaTeX fixtures (automated, no LLM calls)
+  - `fixtures/papers.json`: paper IDs for integration tests
+  - `fixtures/responses/<id>/`: pre-computed LLM responses (stub abstracts, future highlight snippets)
+  - `integration/`: integration tests (layout preservation, require latexmk)
 - `harness/`: manual LLM evaluation with side-by-side PDF comparison
   - `samples/`: LaTeX samples (highlight/, abstract/)
   - `eval_highlight.py`, `eval_abstract.py`, `eval_layout.py`: evaluation scripts
@@ -49,6 +52,8 @@ The design goal is to keep LaTeX diffs minimal and mechanical.
 ## Common commands
 
 - Run tests: `uv run pytest`
+- Run unit tests only: `uv run pytest --ignore=tests/integration/`
+- Run integration tests only: `uv run pytest tests/integration/ -v`
 - Show CLI help: `uv run papervibe --help`
 - Process a paper (dry run): `uv run papervibe arxiv 2107.03374 --dry-run`
 - Process a paper (real): `uv run papervibe arxiv 2107.03374 --concurrency 8`
