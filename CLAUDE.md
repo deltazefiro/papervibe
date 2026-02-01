@@ -3,10 +3,13 @@
 ## Overview
 
 `papervibe` is a Python (uv-managed) CLI tool that:
-1) Downloads an arXiv paper TeX source bundle
-2) Rewrites the LaTeX abstract using a "strong" OpenAI model
-3) Highlights important keywords and sentences by inserting `\\pvhighlight{...}` wrappers
-4) Compiles the modified sources to PDF using `latexmk`
+1) Downloads an arXiv paper TeX source bundle + PDF
+2) Summarizes the paper (PDF) focusing on approach (provides context for subsequent steps)
+3) Rewrites the LaTeX abstract using a "strong" OpenAI model
+4) Highlights important keywords and sentences by inserting `\\pvhighlight{...}` wrappers
+5) Compiles the modified sources to PDF using `latexmk`
+
+Steps 3 and 4 run in parallel, both receiving the paper summary as context.
 
 The design goal is to keep LaTeX diffs minimal and mechanical.
 
@@ -15,9 +18,10 @@ The design goal is to keep LaTeX diffs minimal and mechanical.
 - `pyproject.toml`: uv project config and CLI entry point
 - `src/papervibe/`
   - `cli.py`: Typer CLI and end-to-end pipeline orchestration
-  - `arxiv.py`: arXiv ID parsing + source download/unpack
+  - `arxiv.py`: arXiv ID parsing + source/PDF download
   - `latex.py`: LaTeX helpers (main file detection, references cutoff, abstract span/replace, preamble injection, wrapper stripping)
-  - `llm.py`: AsyncOpenAI wrapper + settings (reads `.env`) + concurrency semaphore
+  - `llm.py`: AsyncOpenAI wrapper + settings (reads `.env`) + concurrency semaphore + PDF completion
+  - `process.py`: pipeline orchestration (summarize → parallel abstract rewrite + highlight)
   - `highlight.py`: chunking + snippet-based highlighting (parse_snippets, apply_highlights, chunk_content_with_seps)
   - `compile.py`: `latexmk` compilation wrapper
 - `tests/`: pytest suite + LaTeX fixtures (automated, no LLM calls)
@@ -69,5 +73,6 @@ By default, results are written under `out/<id>/`:
 - `<id>.pdf`: compiled PDF (if compilation succeeds)
 
 ## Conventions
-- LLM timeout should be at least 120 seconds. Long outputs may need even more.
+- Summarization uses a dedicated timeout (`summarize_timeout_seconds`, default 200s) since PDF processing is slow.
+- Other LLM timeouts should be at least 120 seconds. Long outputs may need even more.
 - Keep CLAUDE.md concise.
