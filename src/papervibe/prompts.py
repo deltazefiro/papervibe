@@ -45,18 +45,19 @@ class PromptRenderer:
         template = self.env.get_template('rewrite_abstract_system.j2')
         return template.render()
     
-    def render_rewrite_abstract_user(self, original_abstract: str) -> str:
+    def render_rewrite_abstract_user(self, original_abstract: str, paper_summary: str = "") -> str:
         """
         Render user prompt for abstract rewriting.
-        
+
         Args:
             original_abstract: The original abstract text
-            
+            paper_summary: Optional paper summary for context
+
         Returns:
             Rendered user prompt
         """
         template = self.env.get_template('rewrite_abstract_user.j2')
-        return template.render(original_abstract=original_abstract)
+        return template.render(original_abstract=original_abstract, paper_summary=paper_summary)
     
     def render_gray_out_system(self) -> str:
         """Render system prompt for graying out sentences."""
@@ -85,13 +86,14 @@ class PromptRenderer:
         template = self.env.get_template('highlight_system.j2')
         return template.render()
 
-    def render_highlight_user(self, chunk: str, highlight_ratio: float) -> str:
+    def render_highlight_user(self, chunk: str, highlight_ratio: float, paper_summary: str = "") -> str:
         """
         Render user prompt for highlighting content.
 
         Args:
             chunk: The text chunk to process
             highlight_ratio: Target ratio of content to highlight (0.0 to 1.0)
+            paper_summary: Optional paper summary for context
 
         Returns:
             Rendered user prompt
@@ -100,7 +102,18 @@ class PromptRenderer:
         return template.render(
             chunk=chunk,
             highlight_ratio_percent=highlight_ratio * 100,
+            paper_summary=paper_summary,
         )
+
+    def render_summarize_system(self) -> str:
+        """Render system prompt for paper summarization."""
+        template = self.env.get_template('summarize_system.j2')
+        return template.render()
+
+    def render_summarize_user(self) -> str:
+        """Render user prompt for paper summarization."""
+        template = self.env.get_template('summarize_user.j2')
+        return template.render()
 
 
 # Global singleton instance

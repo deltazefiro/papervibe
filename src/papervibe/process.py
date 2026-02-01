@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Optional, List, Tuple, Callable
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 
-from .arxiv import parse_arxiv_id, download_arxiv_source
+from .arxiv import parse_arxiv_id, download_arxiv_source, download_arxiv_pdf
 from .latex import (
     find_main_tex_file,
     find_references_cutoff,
@@ -63,9 +63,51 @@ def extract_footnotes(text: str) -> Tuple[str, List[str]]:
     return "".join(result), footnotes
 
 
+async def summarize_paper(
+    llm_client: LLMClient,
+    pdf_data: bytes,
+) -> str:
+    """Summarize a paper from its PDF, focusing on approach and methodology.
+
+    Args:
+        llm_client: LLM client for processing
+        pdf_data: Raw PDF bytes of the paper
+
+    Returns:
+        Summary text (empty string on failure or dry-run)
+    """
+    from .prompts import get_renderer
+
+    if llm_client.dry_run:
+        return ""
+
+    renderer = get_renderer()
+    system_prompt = renderer.render_summarize_system()
+    user_prompt = renderer.render_summarize_user()
+
+    try:
+        return await llm_client.complete_with_pdf(
+            model_type="strong",
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            pdf_data=pdf_data,
+            temperature=0.4,
+            timeout=llm_client.settings.summarize_timeout_seconds,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("Paper summarization timed out, continuing without summary")
+        return ""
+    except Exception as e:
+        from .llm import print_error
+        print_error(e, context="Failed to summarize paper")
+        logger.warning("Continuing without summary")
+        return ""
+
+
 async def rewrite_abstract(
     llm_client: LLMClient,
     original_abstract: str,
+    paper_summary: str = "",
 ) -> str:
     """
     Rewrite an abstract to be more clear and engaging.
@@ -100,8 +142,7 @@ async def rewrite_abstract(
 
     renderer = get_renderer()
     system_prompt = renderer.render_rewrite_abstract_system()
-    # Send abstract without footnotes to LLM (cleaner input)
-    user_prompt = renderer.render_rewrite_abstract_user(abstract_without_footnotes)
+    user_prompt = renderer.render_rewrite_abstract_user(abstract_without_footnotes, paper_summary=paper_summary)
 
     try:
         result = await llm_client.complete_structured(
@@ -134,6 +175,7 @@ async def highlight_chunk(
     llm_client: LLMClient,
     chunk: str,
     highlight_ratio: float = 0.4,
+    paper_summary: str = "",
 ) -> str:
     """
     Highlight important keywords and sentences in a text chunk.
@@ -161,7 +203,7 @@ async def highlight_chunk(
 
     renderer = get_renderer()
     system_prompt = renderer.render_highlight_system()
-    user_prompt = renderer.render_highlight_user(chunk, highlight_ratio)
+    user_prompt = renderer.render_highlight_user(chunk, highlight_ratio, paper_summary=paper_summary)
 
     try:
         llm_output = await llm_client.complete(
@@ -202,6 +244,7 @@ async def highlight_chunks_parallel(
     llm_client: LLMClient,
     chunks: List[str],
     highlight_ratio: float = 0.4,
+    paper_summary: str = "",
 ) -> List[str]:
     """
     Highlight multiple chunks in parallel with concurrency control.
@@ -219,7 +262,7 @@ async def highlight_chunks_parallel(
     async def process_chunk_safe(chunk: str, index: int) -> str:
         """Process a single chunk with error handling."""
         try:
-            return await highlight_chunk(llm_client, chunk, highlight_ratio)
+            return await highlight_chunk(llm_client, chunk, highlight_ratio, paper_summary=paper_summary)
         except Exception as e:
             llm_client.stats["highlight_errors"] += 1
             print_error(e, context=f"Chunk {index + 1}/{len(chunks)} failed")
@@ -253,6 +296,7 @@ async def highlight_content_parallel(
     max_chunk_chars: int = 1500,
     progress_callback: Optional[Callable[[int], None]] = None,
     validate: bool = False,
+    paper_summary: str = "",
 ) -> str:
     """
     Highlight content with parallel chunk processing.
@@ -283,7 +327,7 @@ async def highlight_content_parallel(
 
     # Process all chunks in parallel
     try:
-        highlighted_chunks = await highlight_chunks_parallel(llm_client, chunks, highlight_ratio)
+        highlighted_chunks = await highlight_chunks_parallel(llm_client, chunks, highlight_ratio, paper_summary=paper_summary)
     except Exception as e:
         print_error(e, context="Parallel highlight processing failed entirely")
         return content
@@ -307,6 +351,7 @@ async def process_paper(
     skip_abstract: bool,
     skip_highlight: bool,
     skip_compile: bool,
+    skip_summary: bool,
     highlight_ratio: float,
     concurrency: int,
     dry_run: bool,
@@ -369,56 +414,64 @@ async def process_paper(
     # Initialize modified input files dictionary
     modified_input_files = {}
 
-    # Step 7: Rewrite abstract
-    abstract_file_path = None
-    abstract_found_in_main = False
-
-    if not skip_abstract:
-        logger.info("Rewriting abstract...")
-
-        # First, try to find abstract in main file
-        abstract_result = extract_abstract(modified_content)
-
-        if abstract_result:
-            # Abstract found in main file
-            abstract_found_in_main = True
-            original_abstract, _, _ = abstract_result
-            logger.info("  Found abstract in %s: %s chars", main_tex.name, len(original_abstract))
-
-            new_abstract = await rewrite_abstract(llm_client, original_abstract)
-            logger.info("  New abstract: %s chars", len(new_abstract))
-
-            modified_content = replace_abstract(modified_content, new_abstract)
-        else:
-            # Try to find abstract in included files
-            input_files = find_input_files(modified_content, source_dir)
-            for input_file in input_files:
-                try:
-                    input_content = input_file.read_text(encoding="utf-8", errors="ignore")
-                    abstract_result = extract_abstract(input_content)
-
-                    if abstract_result:
-                        original_abstract, _, _ = abstract_result
-                        logger.info("  Found abstract in %s: %s chars", input_file.name, len(original_abstract))
-
-                        new_abstract = await rewrite_abstract(llm_client, original_abstract)
-                        logger.info("  New abstract: %s chars", len(new_abstract))
-
-                        # Store the file path and modified content for later
-                        abstract_file_path = input_file
-                        modified_input_files[input_file] = replace_abstract(input_content, new_abstract)
-                        break
-                except Exception:
-                    continue
-
-            if abstract_file_path is None and not abstract_found_in_main:
-                logger.warning("No abstract found in main or included files, skipping rewrite")
+    # Step 7: Summarize paper (PDF-based, feeds into abstract rewrite + highlighting)
+    paper_summary = ""
+    if not skip_summary and (not skip_abstract or not skip_highlight):
+        logger.info("Downloading arXiv PDF for summarization...")
+        try:
+            pdf_data = download_arxiv_pdf(arxiv_id, version)
+            logger.info("  PDF downloaded (%d bytes), summarizing...", len(pdf_data))
+            paper_summary = await summarize_paper(llm_client, pdf_data)
+            if paper_summary:
+                logger.info("  Summary: %d chars", len(paper_summary))
+            else:
+                logger.info("  No summary produced, continuing without it")
+        except Exception as e:
+            logger.warning("Failed to download PDF for summarization: %s", e)
+            logger.info("  Continuing without summary")
 
     # Step 8: Inject preamble (xcolor + default gray + \pvhighlight macro)
     logger.info("Injecting preamble...")
     modified_content = inject_preamble(modified_content)
 
-    # Step 9: Highlight important content
+    # Step 9: Run abstract rewrite and highlighting in parallel
+    # Prepare abstract rewrite coroutine
+    abstract_file_path = None
+    abstract_found_in_main = False
+    abstract_coro = None
+    abstract_input_file = None
+    abstract_input_content = None
+
+    if not skip_abstract:
+        logger.info("Preparing abstract rewrite...")
+        abstract_result = extract_abstract(modified_content)
+
+        if abstract_result:
+            abstract_found_in_main = True
+            original_abstract, _, _ = abstract_result
+            logger.info("  Found abstract in %s: %s chars", main_tex.name, len(original_abstract))
+            abstract_coro = rewrite_abstract(llm_client, original_abstract, paper_summary=paper_summary)
+        else:
+            input_files = find_input_files(modified_content, source_dir)
+            for input_file in input_files:
+                try:
+                    input_content = input_file.read_text(encoding="utf-8", errors="ignore")
+                    abstract_result = extract_abstract(input_content)
+                    if abstract_result:
+                        original_abstract, _, _ = abstract_result
+                        logger.info("  Found abstract in %s: %s chars", input_file.name, len(original_abstract))
+                        abstract_input_file = input_file
+                        abstract_input_content = input_content
+                        abstract_coro = rewrite_abstract(llm_client, original_abstract, paper_summary=paper_summary)
+                        break
+                except Exception:
+                    continue
+
+            if abstract_input_file is None and not abstract_found_in_main:
+                logger.warning("No abstract found in main or included files, skipping rewrite")
+
+    # Prepare highlight coroutine
+    highlight_coro = None
     if not skip_highlight:
         logger.info("Highlighting important content (ratio=%s)...", highlight_ratio)
 
@@ -428,40 +481,28 @@ async def process_paper(
         # Prepare list of files to process
         files_to_process = []
         for input_file in input_files:
-            # Skip if already processed during abstract rewrite
-            if input_file in modified_input_files:
-                logger.info("  Skipping %s (already processed during abstract rewrite)", input_file.name)
-                continue
-
+            # Skip abstract-containing files
             try:
                 input_content = input_file.read_text(encoding="utf-8", errors="ignore")
-
-                # Check if this is the abstract file (skip graying)
                 if extract_abstract(input_content):
                     logger.info("  Skipping %s (contains abstract)", input_file.name)
                     continue
-
                 files_to_process.append((input_file, input_content))
             except Exception as e:
                 logger.warning("Failed to read %s: %s", input_file.name, e)
 
         # Count total chunks for progress bar
         total_chunks = 0
-
-        # Count chunks from input files
         for _, content in files_to_process:
             total_chunks += count_chunks(content, max_chunk_chars=max_chunk_chars)
 
-        # Count chunks from main file
         cutoff = find_references_cutoff(modified_content)
         abstract_span = get_abstract_span(modified_content)
 
-        # Determine what content from main file to process
         main_content_to_process = modified_content
         if cutoff is not None:
             main_content_to_process = modified_content[:cutoff]
 
-        # Exclude abstract if present
         if abstract_span is not None:
             abs_start, abs_end = abstract_span
             if abs_end <= len(main_content_to_process):
@@ -473,7 +514,6 @@ async def process_paper(
         else:
             main_parts_to_gray = [main_content_to_process]
 
-        # Count chunks from main parts
         for part in main_parts_to_gray:
             if part.strip():
                 total_chunks += count_chunks(part, max_chunk_chars=max_chunk_chars)
@@ -484,68 +524,103 @@ async def process_paper(
             len(files_to_process),
         )
 
-        # Create progress bar
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            transient=False,
-            console=get_console(),
-        ) as progress:
-            task = progress.add_task("Highlighting chunks", total=total_chunks)
+        async def _run_highlighting():
+            """Run all highlighting and return (highlighted_main_parts, highlight_input_files, stats)."""
+            highlight_input_files = {}
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                transient=False,
+                console=get_console(),
+            ) as progress:
+                prog_task = progress.add_task("Highlighting chunks", total=total_chunks)
 
-            def update_progress(advance: int = 1):
-                """Callback to update progress bar."""
-                progress.update(task, advance=advance)
+                def update_progress(advance: int = 1):
+                    progress.update(prog_task, advance=advance)
 
-            # Process all input files in parallel
-            async def process_input_file(file_path, content):
-                """Process a single input file."""
-                try:
-                    highlighted = await highlight_content_parallel(
-                        content,
-                        llm_client,
-                        highlight_ratio=highlight_ratio,
-                        max_chunk_chars=max_chunk_chars,
-                        progress_callback=update_progress,
-                        validate=validate_chunks,
-                    )
-                    return (file_path, highlighted, len(content))
-                except Exception as e:
-                    logger.warning("Failed to process %s: %s", file_path.name, e)
-                    return (file_path, content, 0)
-
-            # Process all files in parallel
-            if files_to_process:
-                results = await asyncio.gather(*[
-                    process_input_file(fp, content) for fp, content in files_to_process
-                ])
+                async def process_input_file(file_path, content):
+                    try:
+                        highlighted = await highlight_content_parallel(
+                            content,
+                            llm_client,
+                            highlight_ratio=highlight_ratio,
+                            max_chunk_chars=max_chunk_chars,
+                            progress_callback=update_progress,
+                            validate=validate_chunks,
+                            paper_summary=paper_summary,
+                        )
+                        return (file_path, highlighted, len(content))
+                    except Exception as e:
+                        logger.warning("Failed to process %s: %s", file_path.name, e)
+                        return (file_path, content, 0)
 
                 total_chars_processed = 0
-                for file_path, highlighted_content, chars_processed in results:
-                    modified_input_files[file_path] = highlighted_content
-                    total_chars_processed += chars_processed
-            else:
-                total_chars_processed = 0
+                if files_to_process:
+                    results = await asyncio.gather(*[
+                        process_input_file(fp, content) for fp, content in files_to_process
+                    ])
+                    for file_path, highlighted_content, chars_processed in results:
+                        highlight_input_files[file_path] = highlighted_content
+                        total_chars_processed += chars_processed
 
-            # Highlight main file content
-            highlighted_main_parts = []
-            main_chars_processed = 0
-            for part in main_parts_to_gray:
-                if part.strip():
-                    highlighted_part = await highlight_content_parallel(
-                        part,
-                        llm_client,
-                        highlight_ratio=highlight_ratio,
-                        max_chunk_chars=max_chunk_chars,
-                        progress_callback=update_progress,
-                        validate=validate_chunks,
-                    )
-                    highlighted_main_parts.append(highlighted_part)
-                    main_chars_processed += len(part)
-                else:
-                    highlighted_main_parts.append(part)
+                highlighted_main_parts = []
+                main_chars_processed = 0
+                for part in main_parts_to_gray:
+                    if part.strip():
+                        highlighted_part = await highlight_content_parallel(
+                            part,
+                            llm_client,
+                            highlight_ratio=highlight_ratio,
+                            max_chunk_chars=max_chunk_chars,
+                            progress_callback=update_progress,
+                            validate=validate_chunks,
+                            paper_summary=paper_summary,
+                        )
+                        highlighted_main_parts.append(highlighted_part)
+                        main_chars_processed += len(part)
+                    else:
+                        highlighted_main_parts.append(part)
+
+            return highlighted_main_parts, highlight_input_files, total_chars_processed, main_chars_processed
+
+        highlight_coro = _run_highlighting()
+
+    # Run abstract rewrite and highlighting in parallel
+    async def _run_abstract_rewrite():
+        if abstract_coro is None:
+            return None
+        return await abstract_coro
+
+    parallel_tasks = []
+    parallel_tasks.append(_run_abstract_rewrite())
+    if highlight_coro is not None:
+        parallel_tasks.append(highlight_coro)
+    else:
+        # Placeholder so indexing works
+        async def _noop_highlight():
+            return None
+        parallel_tasks.append(_noop_highlight())
+
+    logger.info("Running abstract rewrite and highlighting in parallel...")
+    abstract_result_new, highlight_result = await asyncio.gather(*parallel_tasks)
+
+    # Apply abstract rewrite result
+    if abstract_result_new is not None:
+        logger.info("  New abstract: %s chars", len(abstract_result_new))
+        if abstract_found_in_main:
+            modified_content = replace_abstract(modified_content, abstract_result_new)
+        elif abstract_input_file is not None:
+            abstract_file_path = abstract_input_file
+            modified_input_files[abstract_input_file] = replace_abstract(
+                abstract_input_content, abstract_result_new
+            )
+
+    # Apply highlighting result
+    if highlight_result is not None:
+        highlighted_main_parts, highlight_input_files, total_chars_processed, main_chars_processed = highlight_result
+        modified_input_files.update(highlight_input_files)
 
         # Reconstruct modified_content
         post_refs = modified_content[cutoff:] if cutoff is not None else ""
@@ -565,37 +640,37 @@ async def process_paper(
             if len(highlighted_main_parts) > 0:
                 modified_content = highlighted_main_parts[0] + post_refs
 
-        if modified_input_files:
+        if highlight_input_files:
             logger.info(
                 "Processed %s input files (%s chars) + main file (%s chars)",
-                len(modified_input_files),
+                len(highlight_input_files),
                 total_chars_processed,
                 main_chars_processed,
             )
         elif main_chars_processed > 0:
             logger.info("Processed main file (%s chars)", main_chars_processed)
 
-        # Diagnostic summary
-        wrapper_count = modified_content.count(r"\pvhighlight{")
-        for content in modified_input_files.values():
-            wrapper_count += content.count(r"\pvhighlight{")
+    # Diagnostic summary
+    wrapper_count = modified_content.count(r"\pvhighlight{")
+    for content in modified_input_files.values():
+        wrapper_count += content.count(r"\pvhighlight{")
 
-        if dry_run:
-            logger.info("[Dry Run] No \\pvhighlight{} wrappers actually added.")
-        elif not skip_highlight and highlight_ratio > 0:
-            if wrapper_count == 0:
-                logger.warning("No highlighting was applied (wrapper count: 0)")
-                if any(llm_client.stats.values()):
-                    logger.warning("LLM stats: %s", llm_client.stats)
-                    logger.info(
-                        "Hint: Some requests timed out or failed. Try increasing --llm-timeout or check LLM config."
-                    )
-                else:
-                    logger.info(
-                        "Hint: The LLM might have decided not to highlight any content, or all edits failed validation."
-                    )
+    if dry_run:
+        logger.info("[Dry Run] No \\pvhighlight{} wrappers actually added.")
+    elif not skip_highlight and highlight_ratio > 0:
+        if wrapper_count == 0:
+            logger.warning("No highlighting was applied (wrapper count: 0)")
+            if any(llm_client.stats.values()):
+                logger.warning("LLM stats: %s", llm_client.stats)
+                logger.info(
+                    "Hint: Some requests timed out or failed. Try increasing --llm-timeout or check LLM config."
+                )
             else:
-                logger.info("Applied %s \\pvhighlight{} wrappers.", wrapper_count)
+                logger.info(
+                    "Hint: The LLM might have decided not to highlight any content, or all edits failed validation."
+                )
+        else:
+            logger.info("Applied %s \\pvhighlight{} wrappers.", wrapper_count)
 
     # Step 10: Write modified files
     logger.info("Writing modified files...")

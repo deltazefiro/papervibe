@@ -1,3 +1,8 @@
+{% if paper_summary %}
+Paper summary for context:
+{{ paper_summary }}
+
+{% endif %}
 Output the most important keywords and sentences from this chunk (approximately {{ highlight_ratio_percent }}% of content).
 Output ONLY the exact text snippets to highlight, one per line. No explanations.
 

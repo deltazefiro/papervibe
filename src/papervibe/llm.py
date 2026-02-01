@@ -1,6 +1,7 @@
 """Low-level LLM completion interface."""
 
 import asyncio
+import base64
 import json
 import logging
 from typing import Optional, List, Callable, TypeVar, Any, Type
@@ -151,6 +152,7 @@ class LLMSettings(BaseSettings):
     strong_model: str = "gemini-3-pro-preview"
     light_model: str = "gemini-3-flash-preview"
     request_timeout_seconds: float = 30.0
+    summarize_timeout_seconds: float = 200.0
 
 
 class LLMClient:
@@ -260,6 +262,87 @@ class LLMClient:
                     "model": model,
                     "timeout": f"{self.settings.request_timeout_seconds}s",
                 },
+                user_prompt,
+                output_text,
+            )
+
+            return output_text
+
+    async def complete_with_pdf(
+        self,
+        model_type: str,
+        system_prompt: str,
+        user_prompt: str,
+        pdf_data: bytes,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        timeout: Optional[float] = None,
+    ) -> str:
+        """Completion with a PDF file attachment.
+
+        Args:
+            model_type: "strong" or "light"
+            system_prompt: System prompt
+            user_prompt: User prompt text
+            pdf_data: Raw PDF bytes
+            temperature: Temperature for sampling
+            max_tokens: Maximum tokens to generate
+            timeout: Request timeout in seconds (defaults to settings.request_timeout_seconds)
+
+        Returns:
+            Completion text
+        """
+        if self.dry_run:
+            _log_llm_debug(
+                f"LLM complete_with_pdf ({model_type}, dry run)",
+                {"model": self._get_model(model_type)},
+                user_prompt,
+                user_prompt,
+            )
+            return user_prompt
+
+        model = self._get_model(model_type)
+        b64 = base64.b64encode(pdf_data).decode("utf-8")
+
+        user_content = [
+            {
+                "type": "file",
+                "file": {
+                    "filename": "paper.pdf",
+                    "file_data": f"data:application/pdf;base64,{b64}",
+                },
+            },
+            {"type": "text", "text": user_prompt},
+        ]
+
+        async with self.semaphore:
+
+            async def _make_request():
+                kwargs = {
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_content},
+                    ],
+                    "temperature": temperature,
+                }
+                if max_tokens is not None:
+                    kwargs["max_completion_tokens"] = max_tokens
+                return await asyncio.wait_for(
+                    self.client.chat.completions.create(**kwargs),
+                    timeout=timeout if timeout is not None else self.settings.request_timeout_seconds,
+                )
+
+            response = await retry_with_backoff(
+                _make_request, max_retries=3, context=f"{model_type} pdf completion"
+            )
+
+            result = response.choices[0].message.content
+            output_text = result if result is not None else ""
+
+            _log_llm_debug(
+                f"LLM complete_with_pdf ({model_type})",
+                {"model": model},
                 user_prompt,
                 output_text,
             )

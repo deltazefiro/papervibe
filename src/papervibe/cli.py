@@ -36,8 +36,6 @@ def default_command(
     """Handle default command routing for backward compatibility."""
     setup_logging(verbose=verbose, quiet=quiet, log_level=log_level, log_file=log_file)
     if ctx.invoked_subcommand is None:
-        # No subcommand specified - default to main command
-        # This is handled by the ctx system automatically if we don't intervene
         pass
 
 
@@ -47,6 +45,7 @@ def _process_arxiv_command(
     skip_abstract: bool,
     skip_highlight: bool,
     skip_compile: bool,
+    skip_summary: bool,
     highlight_ratio: float,
     concurrency: int,
     dry_run: bool,
@@ -62,6 +61,7 @@ def _process_arxiv_command(
             skip_abstract=skip_abstract,
             skip_highlight=skip_highlight,
             skip_compile=skip_compile,
+            skip_summary=skip_summary,
             highlight_ratio=highlight_ratio,
             concurrency=concurrency,
             dry_run=dry_run,
@@ -85,6 +85,7 @@ def cmd_arxiv(
     skip_abstract: bool = typer.Option(False, help="Skip abstract rewriting"),
     skip_highlight: bool = typer.Option(False, help="Skip content highlighting"),
     skip_compile: bool = typer.Option(False, help="Skip PDF compilation"),
+    skip_summary: bool = typer.Option(False, help="Skip paper summarization step"),
     highlight_ratio: float = typer.Option(0.4, help="Target ratio of content to highlight"),
     concurrency: int = typer.Option(8, help="Number of concurrent LLM requests"),
     dry_run: bool = typer.Option(False, help="Dry run mode (skip LLM calls)"),
@@ -92,7 +93,7 @@ def cmd_arxiv(
     max_chunk_chars: int = typer.Option(1500, help="Max characters per chunk for highlighting"),
     validate_chunks: bool = typer.Option(False, help="Validate highlighted chunks match originals"),
 ):
-    _process_arxiv_command(url, out, skip_abstract, skip_highlight, skip_compile, highlight_ratio, concurrency, dry_run, llm_timeout, max_chunk_chars, validate_chunks)
+    _process_arxiv_command(url, out, skip_abstract, skip_highlight, skip_compile, skip_summary, highlight_ratio, concurrency, dry_run, llm_timeout, max_chunk_chars, validate_chunks)
 
 
 # Compat alias: papervibe <url> (default command for backward compatibility)
@@ -103,6 +104,7 @@ def main(
     skip_abstract: bool = typer.Option(False, help="Skip abstract rewriting"),
     skip_highlight: bool = typer.Option(False, help="Skip content highlighting"),
     skip_compile: bool = typer.Option(False, help="Skip PDF compilation"),
+    skip_summary: bool = typer.Option(False, help="Skip paper summarization step"),
     highlight_ratio: float = typer.Option(0.4, help="Target ratio of content to highlight"),
     concurrency: int = typer.Option(8, help="Number of concurrent LLM requests"),
     dry_run: bool = typer.Option(False, help="Dry run mode (skip LLM calls)"),
@@ -110,7 +112,7 @@ def main(
     max_chunk_chars: int = typer.Option(1500, help="Max characters per chunk for highlighting"),
     validate_chunks: bool = typer.Option(False, help="Validate highlighted chunks match originals"),
 ):
-    _process_arxiv_command(url, out, skip_abstract, skip_highlight, skip_compile, highlight_ratio, concurrency, dry_run, llm_timeout, max_chunk_chars, validate_chunks)
+    _process_arxiv_command(url, out, skip_abstract, skip_highlight, skip_compile, skip_summary, highlight_ratio, concurrency, dry_run, llm_timeout, max_chunk_chars, validate_chunks)
 
 
 def main_entry():

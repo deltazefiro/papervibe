@@ -170,3 +170,50 @@ def download_arxiv_source(
             raise ArxivError(f"Network error downloading arXiv source: {e}")
     
     raise ArxivError(f"Failed to download arXiv source after {max_retries} attempts")
+
+
+def download_arxiv_pdf(
+    arxiv_id: str,
+    version: Optional[str] = None,
+    max_retries: int = 3,
+    backoff_factor: float = 2.0,
+) -> bytes:
+    """
+    Download arXiv compiled PDF.
+
+    Args:
+        arxiv_id: Normalized arXiv ID
+        version: Optional version string (e.g., "v2")
+        max_retries: Number of retries on failure
+        backoff_factor: Exponential backoff multiplier
+
+    Returns:
+        Raw PDF bytes
+
+    Raises:
+        ArxivError: If download fails
+    """
+    id_with_version = f"{arxiv_id}{version}" if version else arxiv_id
+    url = f"https://arxiv.org/pdf/{id_with_version}.pdf"
+    headers = {"User-Agent": "PaperVibe/0.1.0 (Research tool; mailto:user@example.com)"}
+
+    for attempt in range(max_retries):
+        try:
+            with httpx.Client(headers=headers, follow_redirects=True, timeout=30.0) as client:
+                response = client.get(url)
+                response.raise_for_status()
+                return response.content
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                raise ArxivError(f"arXiv PDF not found: {id_with_version}")
+            if attempt < max_retries - 1:
+                time.sleep(backoff_factor ** attempt)
+                continue
+            raise ArxivError(f"HTTP error downloading arXiv PDF: {e}")
+        except httpx.RequestError as e:
+            if attempt < max_retries - 1:
+                time.sleep(backoff_factor ** attempt)
+                continue
+            raise ArxivError(f"Network error downloading arXiv PDF: {e}")
+
+    raise ArxivError(f"Failed to download arXiv PDF after {max_retries} attempts")

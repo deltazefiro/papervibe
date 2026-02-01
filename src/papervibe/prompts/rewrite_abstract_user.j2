@@ -1,4 +1,12 @@
+{% if paper_summary %}
+Here is a summary of the full paper for context:
+
+{{ paper_summary }}
+
+Now rewrite the following abstract:
+{% else %}
 Rewrite the following abstract:
+{% endif %}
 
 ```latex
 {{ original_abstract }}
