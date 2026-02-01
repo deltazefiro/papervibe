@@ -21,6 +21,7 @@ from .latex import (
 from .llm import LLMClient
 from .logging import get_console
 from .compile import compile_latex, check_latexmk_available
+from .summary import prepend_summary_to_pdf
 
 logger = logging.getLogger(__name__)
 
@@ -708,9 +709,18 @@ async def process_paper(
             )
             logger.info("PDF compiled: %s", pdf_path)
 
-            # Copy PDF to output root for convenience
+            # Prepend summary page and save to output root
             final_pdf = out / f"{arxiv_id.replace('/', '_')}.pdf"
-            shutil.copy2(pdf_path, final_pdf)
+            if paper_summary:
+                logger.info("Prepending summary page...")
+                prepend_summary_to_pdf(
+                    paper_pdf=pdf_path,
+                    summary_markdown=paper_summary,
+                    output_path=final_pdf,
+                    paper_title="PaperVibe Summary",
+                )
+            else:
+                shutil.copy2(pdf_path, final_pdf)
             logger.info("Final PDF: %s", final_pdf)
 
     logger.info("Processing complete!")

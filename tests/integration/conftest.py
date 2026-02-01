@@ -36,6 +36,29 @@ def load_stub_abstract(paper_id: str) -> str:
     return path.read_text().strip()
 
 
+def load_stub_summary(paper_id: str) -> str:
+    """Load pre-computed stub summary for a paper."""
+    path = RESPONSES_DIR / paper_id / "summary.md"
+    if not path.exists():
+        # Return a default summary if none exists
+        return """### TL;DR
+
+This paper presents a novel approach to the problem.
+
+### Motivation
+
+The authors address an important challenge in the field.
+
+### Approach
+
+The method involves several key techniques.
+
+### Experiments
+
+Results demonstrate the effectiveness of the approach."""
+    return path.read_text().strip()
+
+
 def load_stub_highlights(paper_id: str) -> dict:
     """
     Load pre-computed highlight snippets for a paper.
@@ -107,7 +130,7 @@ def create_stub_rewriter(stub_text: str):
     Returns:
         Async function compatible with rewrite_abstract signature
     """
-    async def stub_rewrite_abstract(llm_client, original_abstract: str) -> str:
+    async def stub_rewrite_abstract(llm_client, original_abstract: str, paper_summary: str = "") -> str:
         _, footnotes = extract_footnotes(original_abstract)
         result = stub_text
         if footnotes:
@@ -115,6 +138,22 @@ def create_stub_rewriter(stub_text: str):
         return result
 
     return stub_rewrite_abstract
+
+
+def create_stub_summarizer(stub_summary: str):
+    """
+    Create a stub summarize_paper function that returns fixed text.
+
+    Args:
+        stub_summary: The stub summary text to return
+
+    Returns:
+        Async function compatible with summarize_paper signature
+    """
+    async def stub_summarize_paper(llm_client, pdf_data: bytes) -> str:
+        return stub_summary
+
+    return stub_summarize_paper
 
 
 @pytest.fixture(scope="session")

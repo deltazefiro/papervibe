@@ -8,22 +8,39 @@ from typing import List, Tuple
 import fitz  # PyMuPDF
 
 
-def extract_pages_text(pdf_path: Path, skip_first: bool = True) -> List[str]:
+def get_page_count(pdf_path: Path) -> int:
+    """
+    Get the number of pages in a PDF.
+
+    Args:
+        pdf_path: Path to the PDF file
+
+    Returns:
+        Number of pages
+    """
+    doc = fitz.open(pdf_path)
+    try:
+        return len(doc)
+    finally:
+        doc.close()
+
+
+def extract_pages_text(pdf_path: Path, skip_pages: int = 1) -> List[str]:
     """
     Extract text from each page of a PDF.
 
     Args:
         pdf_path: Path to the PDF file
-        skip_first: Whether to skip the first page
+        skip_pages: Number of pages to skip from the beginning
 
     Returns:
-        List of text content for each page
+        List of text content for each page (after skipped pages)
     """
     doc = fitz.open(pdf_path)
     try:
         pages = []
         for i, page in enumerate(doc):
-            if skip_first and i == 0:
+            if i < skip_pages:
                 continue
             pages.append(page.get_text())
         return pages
@@ -52,6 +69,7 @@ def compare_pages(
     original: Path,
     modified: Path,
     skip_first: bool = True,
+    skip_pages_modified: int = None,
 ) -> List[Tuple[int, str, str, bool]]:
     """
     Compare pages between original and modified PDFs.
@@ -59,23 +77,28 @@ def compare_pages(
     Args:
         original: Path to original PDF
         modified: Path to modified PDF
-        skip_first: Whether to skip the first page
+        skip_first: Whether to skip the first page (legacy, use skip_pages_modified instead)
+        skip_pages_modified: Number of pages to skip in modified PDF (e.g., summary pages)
 
     Returns:
         List of (page_num, original_text, modified_text, match) tuples
     """
-    orig_pages = extract_pages_text(original, skip_first)
-    mod_pages = extract_pages_text(modified, skip_first)
+    # Handle legacy skip_first parameter
+    skip_orig = 1 if skip_first else 0
+    skip_mod = skip_pages_modified if skip_pages_modified is not None else skip_orig
+
+    orig_pages = extract_pages_text(original, skip_pages=skip_orig)
+    mod_pages = extract_pages_text(modified, skip_pages=skip_mod)
 
     if len(orig_pages) != len(mod_pages):
         raise ValueError(
-            f"Page count mismatch: original has {len(orig_pages) + (1 if skip_first else 0)} pages, "
-            f"modified has {len(mod_pages) + (1 if skip_first else 0)} pages"
+            f"Page count mismatch after skipping: original has {len(orig_pages)} pages "
+            f"(skipped {skip_orig}), modified has {len(mod_pages)} pages (skipped {skip_mod})"
         )
 
     results = []
     for i, (orig, mod) in enumerate(zip(orig_pages, mod_pages)):
-        page_num = i + 2 if skip_first else i + 1  # 1-indexed
+        page_num = i + skip_orig + 1  # 1-indexed, relative to original
         orig_norm = normalize_text(orig)
         mod_norm = normalize_text(mod)
         match = orig_norm == mod_norm
