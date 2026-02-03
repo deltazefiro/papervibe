@@ -67,6 +67,32 @@ This paper introduces a **new method**.
         assert r"\subsection*{Key Points}" in result
         assert r"\begin{itemize}" in result
 
+    def test_inline_math_preserved(self):
+        """Test that inline math $...$ is preserved."""
+        result = markdown_to_latex("The equation $x^2 + y^2 = z^2$ is famous.")
+        assert "$x^2 + y^2 = z^2$" in result
+        # Ensure the $ is not escaped
+        assert r"\$" not in result
+
+    def test_display_math_preserved(self):
+        """Test that display math $$...$$ is preserved."""
+        result = markdown_to_latex("The formula is:\n$$E = mc^2$$")
+        assert "$$E = mc^2$$" in result
+
+    def test_math_with_special_chars(self):
+        """Test math containing special chars like _ and ^."""
+        result = markdown_to_latex("Given $x_1, x_2$ and $a^{n+1}$.")
+        assert "$x_1, x_2$" in result
+        assert "$a^{n+1}$" in result
+        # Underscore outside math should be escaped
+        assert r"\_" not in result.replace("$x_1, x_2$", "").replace("$a^{n+1}$", "")
+
+    def test_math_and_formatting_mixed(self):
+        """Test math combined with bold/italic."""
+        result = markdown_to_latex("The **key** equation is $f(x) = x^2$.")
+        assert r"\textbf{key}" in result
+        assert "$f(x) = x^2$" in result
+
 
 class TestEscapeLatex:
     """Tests for LaTeX special character escaping."""

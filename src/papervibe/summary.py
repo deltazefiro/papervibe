@@ -82,7 +82,7 @@ def markdown_to_latex(markdown: str) -> str:
 
 def _process_line(text: str) -> str:
     """
-    Process a line: escape special chars first, then convert inline formatting.
+    Process a line: preserve math, escape special chars, then convert inline formatting.
 
     Args:
         text: Text to process
@@ -90,10 +90,33 @@ def _process_line(text: str) -> str:
     Returns:
         Processed text with escaping and formatting
     """
-    # First escape special characters
+    # Extract math expressions to protect them from escaping
+    math_placeholders = {}
+    counter = 0
+
+    def protect_math(match):
+        nonlocal counter
+        # Use a placeholder without special characters that won't be escaped
+        placeholder = f"MATHPLACEHOLDER{counter}ENDMATH"
+        math_placeholders[placeholder] = match.group(0)
+        counter += 1
+        return placeholder
+
+    # Protect display math ($$...$$) first, then inline math ($...$)
+    text = re.sub(r"\$\$(.+?)\$\$", protect_math, text, flags=re.DOTALL)
+    text = re.sub(r"\$(.+?)\$", protect_math, text)
+
+    # Escape special characters (outside of math)
     escaped = _escape_latex(text)
-    # Then convert inline formatting (bold, italic)
-    return _convert_inline(escaped)
+
+    # Convert inline formatting (bold, italic)
+    formatted = _convert_inline(escaped)
+
+    # Restore math expressions
+    for placeholder, math in math_placeholders.items():
+        formatted = formatted.replace(placeholder, math)
+
+    return formatted
 
 
 def _escape_latex(text: str) -> str:
@@ -163,6 +186,7 @@ def create_summary_latex(summary_markdown: str, paper_title: str = "Paper Summar
 \\usepackage[T1]{{fontenc}}
 \\usepackage{{geometry}}
 \\usepackage{{parskip}}
+\\usepackage{{amsmath,amssymb}}
 
 \\geometry{{margin=1in}}
 

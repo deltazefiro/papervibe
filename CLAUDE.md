@@ -8,6 +8,7 @@
 3) Rewrites the LaTeX abstract using a "strong" OpenAI model
 4) Highlights important keywords and sentences by inserting `\\pvhighlight{...}` wrappers
 5) Compiles the modified sources to PDF using `latexmk`
+6) Prepends a summary page (markdown→LaTeX→PDF) to the final output
 
 Steps 3 and 4 run in parallel, both receiving the paper summary as context.
 
@@ -21,12 +22,13 @@ The design goal is to keep LaTeX diffs minimal and mechanical.
   - `arxiv.py`: arXiv ID parsing + source/PDF download
   - `latex.py`: LaTeX helpers (main file detection, references cutoff, abstract span/replace, preamble injection, wrapper stripping)
   - `llm.py`: AsyncOpenAI wrapper + settings (reads `.env`) + concurrency semaphore + PDF completion
-  - `process.py`: pipeline orchestration (summarize → parallel abstract rewrite + highlight)
+  - `process.py`: pipeline orchestration (summarize → parallel abstract rewrite + highlight → compile → prepend summary)
   - `highlight.py`: chunking + snippet-based highlighting (parse_snippets, apply_highlights, chunk_content_with_seps)
   - `compile.py`: `latexmk` compilation wrapper
+  - `summary.py`: markdown→LaTeX conversion + summary PDF generation + PDF merging (via pypdf)
 - `tests/`: pytest suite + LaTeX fixtures (automated, no LLM calls)
   - `fixtures/papers.json`: paper IDs for integration tests
-  - `fixtures/responses/<id>/`: pre-computed LLM responses (stub abstracts, future highlight snippets)
+  - `fixtures/responses/<id>/`: pre-computed LLM responses (stub abstracts, summaries, highlight snippets)
   - `integration/`: integration tests (layout preservation, require latexmk)
 - `harness/`: manual LLM evaluation with side-by-side PDF comparison
   - `samples/`: LaTeX samples (highlight/, abstract/)
@@ -39,6 +41,7 @@ The design goal is to keep LaTeX diffs minimal and mechanical.
   - abstract replacement (using `\pvreplaceblock{old}{new}` to preserve original layout/spacing)
   - one-time preamble injection (`xcolor` + `\AtBeginDocument{\color{gray}}` + `\pvhighlight` + `\pvreplaceblock` + abstract black override)
   - `\pvhighlight{...}` wrappers around important keywords and sentences
+- Summary page is prepended as a separate PDF (not injected into LaTeX source) to avoid layout interference.
 - Color scheme:
   - Default text color: gray (set via `\AtBeginDocument{\color{gray}}`)
   - Highlighted content: black (via `\pvhighlight{...}` wrapper)
@@ -70,7 +73,7 @@ The design goal is to keep LaTeX diffs minimal and mechanical.
 By default, results are written under `out/<id>/`:
 - `original/`: downloaded/unpacked sources
 - `modified/`: modified sources used for compilation
-- `<id>.pdf`: compiled PDF (if compilation succeeds)
+- `<id>.pdf`: compiled PDF with summary page prepended (if compilation succeeds)
 
 ## Conventions
 - Summarization uses a dedicated timeout (`summarize_timeout_seconds`, default 200s) since PDF processing is slow.
